@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "id": "strategy-maintainer",
+  "roles": [{"id": "maintainer", "prompt": "maintainer.md", "capabilities": ["read", "prepare"]}],
+  "toolRequests": []
+}

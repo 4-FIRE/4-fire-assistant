@@ -1,0 +1,54 @@
+{
+  "name": "4-fire-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone durable options assistant",
+  "type": "module",
+  "bin": {
+    "ffa": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "resources",
+    "README.md",
+    "CONTEXT.md",
+    "docs",
+    "npm-shrinkwrap.json",
+    "extensions",
+    "python/src",
+    "python/requirements.lock",
+    "python/README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node scripts/build-resources.mjs && tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
+    "start": "node dist/main.js",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-agent-core": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
+    "@earendil-works/pi-codemode": "1.1.0"
+  }
+}
