@@ -1,12 +1,12 @@
 # 配置与接入
 
-本文说明本轮实现。完整目标见 [重构设计](refactor-design.md)，验证边界见 [实施进展](refactor-progress.md)。
+本文说明本机配置、工作区布局和服务接入。使用入口见 [README](../README.md)，运行边界见 [技术设计](technical-design.md)。
 
 ## 本机模型配置
 
 ffa --configure 设置模型、思考级别、超时与认证路径。ffa --login PROVIDER 使用独立终端输入凭据。凭据不进入模型对话、手册或记忆。
 
-配置默认位于 ~/.config/4-fire-assistant/config.local.json，支持 XDG_CONFIG_HOME。服务连接不再放入本机配置。
+配置默认位于 ~/.config/4-fire-assistant/config.local.json，支持 XDG_CONFIG_HOME。服务连接保存在工作区配置中。
 
 ```json
 {
@@ -36,6 +36,7 @@ ffa --configure 设置模型、思考级别、超时与认证路径。ffa --logi
   BOOTSTRAP.md
   sources/AGENTS.md
   sources/<id>/GUIDE.md
+  SOUL.md
   roles/<role>.md
   skills/<name>/SKILL.md
   extensions/<id>/
@@ -43,6 +44,8 @@ ffa --configure 设置模型、思考级别、超时与认证路径。ffa --logi
   packages/
   projects/<project>/runs/<runId>/
 ```
+
+首次打开时创建配置、数据库和引导资料。服务手册、角色覆盖、技能、扩展、记忆、安装目录和研究记录按需创建；SOUL.md 为可选文件。
 
 config.json 使用 version=2。initialization 起初为 null；只有完成工具验证真实调用记录并取得用户确认后才登记完成。不要手动填入伪造的验证引用。
 

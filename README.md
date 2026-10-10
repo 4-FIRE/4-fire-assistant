@@ -4,7 +4,7 @@
 
 内置研究、技术分析、回测、机会分析及独立复核。数据与可选交易服务均可通过 CLI 或 MCP 接入。策略维护通过显式授权的扩展提供。
 
-需要 Linux、Node.js 22.19+ 和 Python 3.11+。本轮实现与待验收项见 [实施进展](docs/refactor-progress.md)，完整决策见 [重构设计](docs/refactor-design.md)。
+需要 Linux、Node.js 22.19+ 和 Python 3.11+。
 
 ## 安装与启动
 
@@ -72,5 +72,7 @@ git diff --check
 ```
 
 测试使用真实本地逻辑、临时目录、真实 CLI 和 Python 进程。不使用假模型或模拟服务，不执行真实交易。Node 测试不下载 Python 依赖。
+
+本地测试不证明真实模型和服务的完整业务行为。运行验收需使用获准服务，检查对话式初始化、按需选择技能、专家中断恢复和 codemode 部分完成记录。交易复核与确认界面应在不发送真实订单的条件下检查。
 
 [配置说明](docs/configuration.md) · [技术设计](docs/technical-design.md) · [领域术语](CONTEXT.md) · [计算库与许可](python/README.md)
