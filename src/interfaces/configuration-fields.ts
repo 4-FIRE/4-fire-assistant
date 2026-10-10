@@ -101,7 +101,6 @@ export function configurationSummary(config: ApplicationConfig): string {
     "回答更新间隔（毫秒）：" + (config.runtime?.progressIntervalMs ?? "默认"),
     "认证文件：" + (config.authPath ?? "Pi 默认路径"),
     "模型文件：" + (config.modelsPath ?? "Pi 默认路径"),
-    "本机工具来源：" + Object.keys(config.sources ?? {}).join(", "),
     "计算解释器：" + (config.research?.python ?? "python3"),
   ].join("\n");
 }

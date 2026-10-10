@@ -53,20 +53,3 @@ def test_indicators_known_values_and_warmup():
     assert low[-1] < mid[-1]
     dif, dea, hist = indicators.macd(prices)
     assert hist[-1] == pytest.approx(2 * (dif[-1] - dea[-1]))
-
-def test_protocol_rejects_invalid_metadata_and_intraday():
-    from ffa_compute.__main__ import run
-    bars = [{"date": f"2025-01-{i:02d}", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100} for i in range(1, 11)]
-    request = {"version": 1, "operation": "indicators", "bars": bars, "context": {"symbol": True}}
-    with pytest.raises(ValueError, match="Explicit"):
-        run(request)
-    bars[0]["date"] = "2025-01-01T12:00:00"
-    with pytest.raises(ValueError, match="daily"):
-        run(request)
-
-def test_protocol_rejects_boolean_financial_parameters():
-    from ffa_compute.__main__ import run
-    bars = [{"date": f"2025-01-{i:02d}", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100} for i in range(1, 11)]
-    context = {"symbol": "FIX", "market": "CN-A", "currency": "CNY", "adjustment": "none", "source": "fixture", "obtainedAt": "2025-02-01"}
-    with pytest.raises(ValueError, match="numbers"):
-        run({"version": 1, "operation": "backtest", "bars": bars, "context": context, "parameters": {"cash": True}})

@@ -1,37 +1,42 @@
-# 工具接入说明
+# 原生服务接入
 
-这份文档供模型按需阅读，不是问卷、普通回答格式或必经阶段。对话、用途、缺口、研究结论与接入进度以自然语言保存为记忆。记忆不能安装 MCP、建立连接或授予权限；实际操作边界仍须检查原生参数并取得用户确认。
+CLI 与 MCP 都可提供数据或交易能力。程序保存连接、操作权限、原生参数绑定和交易回执约定，不统一行情数据格式。
 
-## 阅读与发现
+## 接入工具
 
-read_material 读取用户提供的普通资料文件绝对路径，有大小和翻页限制；不要读取凭据。read_reference 读取已登记包内说明。locate_cli 查询一个命令名，不执行。inspect_source 只需要 name、kind 与必要连接；location 未知时可省略，明确 connection 优先于 location。CLI 用 discoveryArgs 提出文档依据下的帮助或契约查询，默认 --help。MCP 只连接并取得工具清单。不得用这些入口发送业务操作。每份发现回执独立保留为记忆，不覆盖先前子命令的材料。默认复用已读材料；用户明确要求重新核实已变更接口时，可用 refresh=true 提出新的发现，仍须确认，并保留旧版本。
+locate_cli 的 command 是单独命令名，只定位不执行。inspect_source 接收 connection 和可选 args；CLI 默认 args 为 ["--help"]，MCP 读取工具清单。每次外部发现均需确认。
 
-## MCP 安装
+install_package 接收安装器的绝对 command 与 args，支持 npm/pip/uv/python -m pip。按可信说明安装缺失软件，不用 shell 或 sudo。安装在工作区 packages 下运行；失败可能已产生文件，先核对。
 
-本地 MCP 软件尚未安装时，先阅读可信安装文档，再用 install_mcp 指定名称、包安装器绝对路径和原生 args。支持 npm install、pip install、uv tool/pip install、python -m pip install；不接受 shell、sudo 或任意脚本命令。用户确认完整 argv 和安装目录后执行，120 秒超时、128 KiB 输出上限。工作目录为本工作区 .ffa/mcp，使用独立 HOME/缓存，不继承凭据；包安装器和安装脚本仍属于用户信任边界，不提供宿主隔离。
+configure_source 接收 id、connection 和 operations，确认后立即可用。id 以小写字母开头，只含小写字母、数字和连字符，长度为 1–64；不能含下划线。ID 或参数错误时修正该次调用，不要重建工作区。连接失败保留原配置。remove_source 只移除指定来源及权限，需要确认；保留资料和历史记录。
 
-安装不自动授权操作。成功回执作为记忆；随后用精确 stdio 入口或远端地址发现接口，再提出约定并确认权限。npm 本地包入口通常位于 .ffa/mcp/node_modules/.bin，须按安装文档核实，不猜名称。远端 HTTP MCP 无需安装本地服务；已经存在的服务也不重复安装。取消、失败或超时不证明未安装，可能已留下部分文件，先核对。默认返回已有安装回执，不宣称它证明当前软件仍可用。用户明确要求重新安装时可用 repeat=true，重新单独确认并保留旧回执，不能自动设置以绕过拒绝。
+source_catalog 显示当前角色获准的接口。source_read 使用 来源/操作 名称和原生 parameters，保存实际 evidenceRef。
 
-## 显式接入变更
+## connection
 
-propose_source 提交一个来源的 id、name、kind、connection、operations；description、location、missing 是可选展示材料，未知不填，不编造。id 为小写字母开头的小写字母、数字或连字符，最多 64 字符。同 id 更新该来源，不影响其他来源。remove_source 只用于用户明确撤回的 id。普通回答不改变来源。初始化由 /finish 查看并确认；完成后的变更也可在模型对话中提出，终端单独确认并在重启后生效，不重新启动初始化角色。
+HTTP MCP 使用 transport: "http" 与 url，可用 apiKeyEnv 引用本机环境变量；apiKeyHeader 可为 Authorization 或 X-API-Key。
 
-CLI connection 使用 transport=cli 和 command（单独的可执行文件绝对路径）。MCP HTTP 使用 transport=http、url；本地服务使用 transport=stdio、command、args。env 为子进程变量到本机环境变量名的映射，不能填写凭据值。HTTP 可使用 apiKeyEnv、apiKeyHeader 环境引用。CLI 可声明 bindingFiles 固定影响连接目标的配置文件。不要覆盖其他工作区已有的不同连接；冲突时说明并提出新的来源标识。
+stdio MCP 使用 transport: "stdio"、command 和 args。env 的键是子进程变量名，值是本机环境变量名，不是凭据内容。
 
-operations 每项包含 name、description、access（read/write）、schema 和 roles。schema 是原生参数对象的 JSON schema；这只是工具调用边界，不是你的回答格式。MCP 名称、描述、schema 应匹配实际目录。roles 只申请已启用角色需要的权限，内置角色为 coordinator、researcher、reviewer；扩展角色仅在已启用时使用。不得根据名称猜测只读性质或写入要求。
+CLI 使用 transport: "cli" 和绝对 command，可选 env、timeoutMs、maxOutputBytes。env 同样只保存环境引用。不要把凭据放进 URL、参数、手册或源码。
 
-## CLI 原生参数
+## operations
 
-argv 是原样传递的固定字符串及明确绑定，不使用 shell 拼接。可以按实际文档选择：
+每项包含原生 name、description、access 与 roles。access 为 read 或 write；roles 是明确授权的角色名列表。不按操作名猜测副作用。所有交易变更都归 write。
 
-- 一个 {"parameters":"json"}：整个参数对象作为一个 JSON argv 值；或 stdin="json" 且 argv 仅含固定字符串。
-- {"parameter":"symbol"} 等绑定：该字段按字符串/数值/布尔值原样成为一个 argv 值，如 ["quotes","--symbol",{"parameter":"symbol"}]。字符串中的空格、引号、shell 符号不执行，也不拆分。
-- 无参数操作：只用固定 argv，参数 schema 为 type=object、additionalProperties=false、无属性，调用参数为空对象。
+MCP 的 schema 来自服务，不必重复声明参数。CLI 必须声明对象类型的 JSON schema 和 argv：
 
-JSON 与字段绑定不能混用。字段绑定仅支持顶层标量字段，每个字段声明 schema 并列入 required，additionalProperties=false，所有允许的字段必须且只能绑定一次，不能接受后静默丢弃参数。复杂原生结构暂未支持时明确说明，不为了接入伪造 JSON 输入渠道。每个 CLI 操作都显式提供 argv（可以为空数组）。
+- 字符串元素是固定参数，不经 shell。
+- {"parameter":"field"} 将明确标量字段作为一个独立参数；字段必须存在且不能被遗漏。
+- {"parameters":"json"} 将完整 parameters 作为单个 JSON 参数。
+- stdin: "json" 可改用标准输入传完整参数，不能同时使用 JSON 参数或字段绑定。
 
-## 写入边界
+CLI 可选 resultSchema 验证原生输出；查询可以返回文本或 JSON。不要为行情编造统一字段。
 
-write 操作必须有 execution：reviewRequired 布尔值与 confirmationRequired=true。交易要求独立复核，普通维护按已确认规则确定。outcomes 包含 accepted、rejected 两个完整对象的可校验 JSON schema，并声明必要字段；批量结果要覆盖全部项目。可提供 resultSchema 检查只读结果。协议成功或退出码 0 不证明业务成功。
+## 交易回执
 
-目录应提前公开 read/write 分类、执行要求及原生绑定，模型据此选择流程。prepare_write 只准备精确操作；submit_review 登记独立结论；execute_write 单独请求本次精确终端确认并发送一次。记忆、安装、接入确认、历史 APPROVE 都不是当前执行许可。歧义结果保留未知义务，不用模型解释或重试解除。
+所有 write 都要求独立复核和用户确认，不能配置关闭。outcomes.accepted 与 outcomes.rejected 是针对原生业务结果的 JSON Schema。恰好一个匹配时才登记明确受理或拒绝。
+
+未提供 outcomes 时，两个条件都不匹配，结果保持未知。条件冲突、协议失败、无法解析或不完整结果也不能当作确定完成。回执条件必须覆盖全部调用范围，不能只验证批次里某一个成功项。
+
+协议成功不证明业务受理，业务受理不证明成交。手册说明订单状态、核对方式和部分结果含义，不通过真实下单测试接入。

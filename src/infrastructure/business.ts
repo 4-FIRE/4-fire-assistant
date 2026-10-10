@@ -20,10 +20,12 @@ import { ArtifactDoc, ExpertDoc, RoundDoc, TeamDoc, WorkDoc, json, type Delegati
 import type { Research } from "./research.js";
 import { ResourceSnapshot } from "./resources.js";
 import type { MemoryPort } from "../application/memory.js";
-import type { InitializationTools } from "../application/initialization.js";
+import type { WorkspaceServices, ConfirmAction } from "./workspace-services.js";
+import { fileTools } from "./file-tools.js";
+import { codemodeTools } from "./codemode.js";
 import { WorkspaceMemory } from "./memory.js";
 import { memoryTools, callMemory } from "./memory-tools.js";
-import { availableSetupTools, callSetup } from "./setup-tools.js";
+import { setupTools } from "./setup-tools.js";
 import { join } from "node:path";
 
 const context = BACKGROUND_CONTEXT;
@@ -40,7 +42,8 @@ export interface BusinessOptions {
   resources?: ResourceSnapshot;
   research?: Research;
   memory?: MemoryPort;
-  setup?: InitializationTools;
+  services?: WorkspaceServices;
+  confirmAction?: ConfirmAction;
   workingDirectory?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
@@ -64,24 +67,17 @@ export class BusinessIntegration {
   private constructor(options: BusinessOptions, model: ModelSelection, prompts: Record<Role, string>) {
     this.#options = options; this.#resources = options.resources ?? ResourceSnapshot.defaults(); this.#model = model; this.#prompts = prompts;
     const tools: ToolRegistration[] = [
-      defineTool({ name: "read_reference", description: this.#resources.promptText("tools", "read_reference"),
-        parameters: Type.Object({ path: Type.String() }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          const value = { path: args.path, text: this.#resources.reference(args.path) };
-          const receipt = await this.evidence(api, scope, "read_reference", { path: args.path }, value, true);
-          return result({ ...value, evidenceRef: receipt.ref });
-        }) }),
       defineTool({ name: "current_time", description: this.#resources.promptText("tools", "current_time"),
         parameters: Type.Object({}, { additionalProperties: false }), replay: "safe",
         execute: async (_args, api, ctx) => this.run(api, ctx, async () => result({ utc: new Date().toISOString() })) }),
-      defineTool({ name: "market_catalog", description: this.#resources.promptText("tools", "market_catalog"),
+      defineTool({ name: "source_catalog", description: this.#resources.promptText("tools", "source_catalog"),
         parameters: Type.Object({}, { additionalProperties: false }), replay: "safe",
         execute: async (_args, api, ctx) => this.run(api, ctx, async scope => {
           await this.#options.trading?.refresh(ctx.abortSignal);
           const trading = this.#options.trading;
-          return result({ available: !!trading, operations: trading?.catalog().filter(tool => !trading.allowed || trading.allowed(tool.name, scope.role)) ?? [], notices: this.#options.notices ?? [] });
+          return result({ available: !!trading, status: options.services?.status() ?? trading?.status(), operations: trading?.catalog().filter(tool => !trading.allowed || trading.allowed(tool.name, scope.role)) ?? [], notices: this.#options.notices ?? [] });
         }) }),
-      defineTool({ name: "market_read", description: this.#resources.promptText("tools", "market_read"),
+      defineTool({ name: "source_read", description: this.#resources.promptText("tools", "source_read"),
         parameters: Type.Object({ operation: Type.String(), parameters: nativeParameters }, { additionalProperties: false }), replay: "safe",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
           requireCapability(scope.role, "read", this.#resources.roles);
@@ -110,6 +106,7 @@ export class BusinessIntegration {
           expertId: Type.Optional(Type.String()), reportRefs: Type.Optional(Type.Array(Type.String(), { maxItems: 100 })), intentId: Type.Optional(Type.String()) }, { additionalProperties: false }),
         replay: "safe", executionMode: "parallel",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
+          options.services?.requireInitialized();
           const service = new ExpertService(this.expertPort(api, ctx), this.#resources.roles);
           const report = await service.delegate(scope, `delegate:${api.taskId}`, args as DelegationInput);
           return result({ expertId: report.expertId, reportRef: report.ref, status: report.status, summary: report.content.slice(0, 8000),
@@ -121,58 +118,54 @@ export class BusinessIntegration {
         requireCapability(scope.role, "read", this.#resources.roles); // Local knowledge is not computation or external write authority.
         return result(await callMemory(options.memory!, tool.name, args as Record<string, unknown>));
       }) })));
-    if (options.setup) tools.push(...availableSetupTools(options.setup).map(tool => defineTool({ ...tool, replay: "unsafe",
-      execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-        if (scope.role !== "coordinator") throw new AssistantError("SETUP_ROLE_DENIED", "只有协调者能请求安装或修改接入，知识与权限不能混用。");
-        options.setup!.beginRequest?.(scope.requestId);
-        return result(await callSetup(options.setup!, tool.name, args as Record<string, unknown>, ctx.abortSignal ?? new AbortController().signal));
-      }) })));
+    const confirm = options.confirmAction ?? (async () => { throw new AssistantError("APPROVAL_UNAVAILABLE", "没有用户确认入口。"); });
+    if (options.workingDirectory) tools.push(...fileTools(options.workingDirectory, confirm, (api, ctx) => this.scope(api, ctx)));
+    if (options.services) {
+      tools.push(...setupTools(options.services, confirm).map(tool => ({ ...tool, execute: async (args, api, ctx) => {
+        const scope = await this.scope(api, ctx);
+        if (scope.role !== "coordinator") throw new AssistantError("ROLE_DENIED", "只有协调者可以变更接入。");
+        return tool.execute(args, api, ctx);
+      } } as ToolRegistration)));
+      tools.push(defineTool({ name: "finish_initialization", description: "使用当前主会话的实际行情和历史 K 线查询 evidenceRef 完成初始化。程序核实来源与回执，模型解释数据，用户确认。交易服务可选。",
+        parameters: Type.Object({ market: Type.String({ minLength: 1 }), quoteRef: Type.String(), historyRef: Type.String() }, { additionalProperties: false }), replay: "unsafe", executionMode: "sequential",
+        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
+          if (scope.role !== "coordinator") throw new AssistantError("ROLE_DENIED", "只有协调者可以完成初始化。");
+          const quote = (await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, args.quoteRef, ctx))?.value as unknown as Evidence | undefined;
+          const history = (await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, args.historyRef, ctx))?.value as unknown as Evidence | undefined;
+          return result(await options.services!.finish(args.market, quote, history, ctx.abortSignal));
+        }) }));
+    }
     if (options.research) tools.push(
-      defineTool({ name: "research_list", description: "列出本工作区研究项目，或项目中的实验引用。最多 200 项。研究结论通过 memory_recall 查找。",
+      defineTool({ name: "research_list", description: "列出工作区研究项目，或查看某项目实验的运行状态。用 read 阅读路径中的源码、日志和结果。",
         parameters: Type.Object({ project: Type.Optional(Type.String()) }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          requireCapability(scope.role, "read", this.#resources.roles);
-          return result(await options.research!.list(args.project));
-        }) }),
-      defineTool({ name: "research_read", description: "按项目及实验引用有界读取计算记录。不能读取任意宿主路径。研究结论通过 memory_read 阅读。",
-        parameters: Type.Object({ project: Type.String(), id: Type.String(),
-          file: Type.Optional(Type.Union([Type.Literal("manifest.json"), Type.Literal("request.json"), Type.Literal("result.json")])),
-          offset: Type.Optional(Type.Integer({ minimum: 0 })) }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          requireCapability(scope.role, "read", this.#resources.roles);
-          return result(await options.research!.read(args.project, args.id, args.file, args.offset));
-        }) }),
-      defineTool({ name: "research_status", description: "检查共享 Python 计算环境。",
+        execute: async (args, api, ctx) => this.run(api, ctx, async () => result(await options.research!.list(args.project))) }),
+      defineTool({ name: "research_status", description: "检查客户端管理的共享 Python 环境。",
         parameters: Type.Object({}, { additionalProperties: false }), replay: "safe",
         execute: async (_args, api, ctx) => this.run(api, ctx, async () => result(await options.research!.status())) }),
-      defineTool({ name: "research_compute", description: "使用共享 Python 环境计算技术指标或 A 股单标的回测。保存数据、Python 策略、来源与参数快照。仅本地研究，不连接外部服务。先读 references/compute.md。",
-        parameters: Type.Object({ project: Type.String({ pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$" }),
-          request: nativeParameters, strategy: Type.Optional(Type.String({ maxLength: 262144 })),
-          evidenceRefs: Type.Array(Type.String(), { maxItems: 100 }) }, { additionalProperties: false }), replay: "unsafe",
+      defineTool({ name: "python", description: "在共享环境运行普通 Python，保存源码、inputs.json、依据、日志和产物。代码从当前实验目录读 inputs.json，可导入 ffa_compute 计算库。不是沙箱。只在初始化完成后使用；中断不会自动重放。",
+        parameters: Type.Object({ project: Type.String(), code: Type.String({ minLength: 1, maxLength: 262144 }),
+          inputs: Type.Optional(Type.Unknown()), evidenceRefs: Type.Optional(Type.Array(Type.String(), { maxItems: 100 })) }, { additionalProperties: false }), replay: "unsafe",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
+          options.services?.requireInitialized();
           requireCapability(scope.role, "compute", this.#resources.roles);
-          const expert = await api.snapshot(ExpertDoc, api.conversationId, ctx);
-          const reports = new ReportService({ get: async (ownerId, ref) =>
-            (await api.snapshot(ArtifactDoc, ownerId as ConversationId, ref, ctx))?.value as unknown as Report | Evidence | undefined });
           const evidence: Json[] = [];
-          for (const ref of args.evidenceRefs) {
-            await reports.read(scope, ref, expert?.allowedRefs ?? []);
-            evidence.push((await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, ref, ctx))!.value as Json);
+          for (const ref of args.evidenceRefs ?? []) {
+            const value = await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, ref, ctx);
+            if (!value) throw new AssistantError("REPORT_UNAVAILABLE", "依据引用不存在。");
+            evidence.push(value.value as Json);
           }
-          const value = await options.research!.run({ project: args.project, request: args.request as Parameters,
-            ...(args.strategy ? { strategy: args.strategy } : {}), evidence }, ctx.abortSignal);
-          const successful = value !== null && typeof value === "object" && !Array.isArray(value) &&
-            value.result !== null && typeof value.result === "object" && !Array.isArray(value.result) && value.result.status === "ok";
-          const receipt = await this.evidence(api, scope, "research_compute", { project: args.project }, value, successful);
-          const serialized = JSON.stringify(value);
-          return result({ evidenceRef: receipt.ref, ...(serialized.length <= 16000 ? { data: value } :
-            { preview: serialized.slice(0, 16000), truncated: true }) }, !successful);
+          const value = await options.research!.run({ project: args.project, code: args.code, inputs: json(args.inputs ?? null), evidence }, ctx.abortSignal);
+          const successful = !!value && typeof value === "object" && !Array.isArray(value) && value.state === "completed";
+          const receipt = await this.evidence(api, scope, "python", { project: args.project }, value, successful);
+          return result({ evidenceRef: receipt.ref, data: value }, !successful);
         }) }),
     );
+    tools.push(...codemodeTools((api, ctx) => this.scope(api, ctx)));
     tools.push(
       defineTool({ name: "prepare_write", description: this.#resources.promptText("tools", "prepare_write"),
         parameters: Type.Object({ operation: Type.String(), parameters: nativeParameters, objectiveRef: Type.String({ minLength: 1, maxLength: 4096 }) }, { additionalProperties: false }), replay: "safe",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
+          options.services?.requireInitialized();
           canonical(args.parameters as Json);
           const intent = await this.execution().prepare(scope, { name: args.operation, parameters: json(args.parameters) as Parameters }, args.objectiveRef, await this.roundEvidence(api, scope, ctx));
           return result({ intentId: intent.intentId, revision: intent.revision, state: intent.state, operation: intent.operation, binding: intent.binding,
@@ -204,6 +197,7 @@ export class BusinessIntegration {
       defineTool({ name: "execute_write", description: this.#resources.promptText("tools", "execute_write"),
         parameters: Type.Object({ intentId: Type.String() }, { additionalProperties: false }), replay: "unsafe",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
+          options.services?.requireInitialized();
           const intent = await this.execution().execute(scope, args.intentId, `tool:${api.taskId}`, ctx.abortSignal);
           return this.intentResult(api, scope, intent);
         }) }),
@@ -212,7 +206,7 @@ export class BusinessIntegration {
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => this.intentResult(api, scope, await this.execution().inspect(scope, args.intentId))) }),
     );
     this.#extension = defineExtension({ name: "fire.business", tools, tasks: [Anchor], sections: [
-      { key: "fire-integration-status", render: () => (this.#options.notices ?? []).join("\n") },
+      { key: "fire-workspace", render: () => this.#resources.context(this.#options.services?.initialized ?? true) },
     ] });
   }
   static async create(options: BusinessOptions, model: ModelSelection): Promise<BusinessIntegration> {
@@ -253,14 +247,14 @@ export class BusinessIntegration {
     const receipt = await this.evidence(api, scope, intent.operation.name, intent.operation.parameters, json(intent), intent.observation?.success ?? false, intent.binding);
     return result({ intentId: intent.intentId, revision: intent.revision, state: intent.state, operation: intent.operation, attempt: intent.attempt,
       observation: intent.observation, reconciliation: intent.reconciliation, receiptRef: receipt.ref,
-      warning: this.#resources.promptText("runtime", "intentStatus") }, ["Unknown", "ProvenNotSent", "Abandoned"].includes(intent.state) || intent.observation?.success === false);
+      warning: this.#resources.promptText("runtime", "intentStatus") }, ["DispatchStarted", "Unknown", "ProvenNotSent", "Abandoned"].includes(intent.state) || intent.observation?.success === false);
   }
   agent(role: Role): AgentChange {
     if (!Object.hasOwn(this.#prompts, role)) throw new AssistantError("ROLE_DENIED", "角色未启用。");
     const requirements: Record<string, Capability> = { delegate_expert: "delegate", prepare_write: "prepare", execute_write: "execute",
-      submit_review: "review", research_compute: "compute" };
+      submit_review: "review", python: "compute" };
     return { model: this.#model, ...(this.#options.thinkingLevel ? { thinkingLevel: this.#options.thinkingLevel } : {}),
-      extensions: [this.extension], tools: { remove: this.extension.tools!.filter(tool => requirements[tool.name] && !can(role, requirements[tool.name]!, this.#resources.roles) || role !== "coordinator" && availableSetupTools(this.#options.setup ?? {}).some(item => item.name === tool.name)) }, instructions: this.#prompts[role]! };
+      extensions: [this.extension], tools: { remove: this.extension.tools!.filter(tool => requirements[tool.name] && !can(role, requirements[tool.name]!, this.#resources.roles) || role !== "coordinator" && ["locate_cli", "inspect_source", "install_package", "configure_source", "remove_source", "finish_initialization"].includes(tool.name)) }, instructions: this.#prompts[role]!, ...(this.#options.workingDirectory ? { cwd: this.#options.workingDirectory } : {}) };
   }
   async resolve(ownerId: number, id: string, revision: number, note: string): Promise<Json> {
     return json(await this.execution().resolve(ownerId, id, revision, note));
@@ -407,7 +401,7 @@ export class BusinessIntegration {
       },
     };
   }
-  async status() { return { execution: this.#execution ? await this.#execution.status() : { configured: false }, trading: this.#options.trading?.status?.() ?? { configured: !!this.#options.trading },
+  async status() { return { workspace: this.#options.services?.status() ?? null, execution: this.#execution ? await this.#execution.status() : { configured: false }, trading: this.#options.trading?.status?.() ?? { configured: !!this.#options.trading },
     research: this.#options.research ? await this.#options.research.status() : { available: false }, notices: this.#options.notices ?? [] }; }
   async intents(ownerId: ConversationId): Promise<Json[]> {
     const all = await this.#intentStore?.list() ?? [];

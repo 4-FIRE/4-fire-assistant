@@ -18,6 +18,7 @@ export interface ConversationSummary { id: string; title: string }
 export interface TranscriptMessage { id: string; role: "user" | "assistant"; text: string }
 export interface WorkSummary {
   requestId: string;
+  content?: string;
   status: "admitting" | "running" | "answered" | "unanswered" | "cancelled";
 }
 export interface CommittedView {

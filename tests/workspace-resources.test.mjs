@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ResourceSnapshot } from "../dist/infrastructure/resources.js";
+import { fileMutationPolicy } from "../dist/infrastructure/file-tools.js";
 import { can } from "../dist/application/permissions.js";
 
 async function temp(t) {
@@ -21,12 +22,19 @@ test("default roles and extension grants cannot exceed requested capabilities",a
   assert.equal(can("strategy-maintainer/maintainer","read",resources.roles),true);
   await assert.rejects(ResourceSnapshot.load(directory,{"strategy-maintainer":{maintainer:["execute"]}}),{code:"EXTENSION_INVALID"});
 });
-test("extension files are data; unknown resource overrides and symlinks fail closed",async t=>{
-  const directory = await temp(t);
-  await mkdir(join(directory,"resources"));
-  await symlink("/etc/passwd",join(directory,"resources","reference.md"));
-  await assert.rejects(ResourceSnapshot.load(directory),{code:"RESOURCE_SYMLINK"});
-  await rm(join(directory,"resources","reference.md"));
-  await writeFile(join(directory,"resources","new.md"),"unknown");
-  await assert.rejects(ResourceSnapshot.load(directory),{code:"RESOURCE_UNKNOWN"});
+test("ordinary files, state and long-term instructions use distinct write policies, including aliases",async t=>{
+  const directory = await temp(t), outside = await temp(t);
+  assert.equal(await fileMutationPolicy(directory,"projects/study/result.json"),"ordinary");
+  assert.equal(await fileMutationPolicy(directory,"sources/provider/GUIDE.md"),"ordinary");
+  for(const path of ["config.json","state.sqlite-wal","memory/entry.md"]) assert.equal(await fileMutationPolicy(directory,path),"state");
+  for(const path of ["AGENTS.md","roles/researcher.md","skills/custom/SKILL.md"]) assert.equal(await fileMutationPolicy(directory,path),"confirm");
+  await writeFile(join(directory,"config.json"),"{}");
+  await symlink(join(directory,"config.json"),join(directory,"alias.json"));
+  assert.equal(await fileMutationPolicy(directory,"alias.json"),"state");
+  await symlink(outside,join(directory,"skills"));
+  assert.equal(await fileMutationPolicy(directory,"skills/custom/SKILL.md"),"confirm");
+  await mkdir(join(directory,"extensions","local"),{recursive:true});
+  await writeFile(join(directory,"extensions","local","extension.json"),JSON.stringify({id:"local",version:1,roles:[{id:"reader",prompt:"reader.md",capabilities:["read"]}]}));
+  await symlink(join(directory,"config.json"),join(directory,"extensions","local","reader.md"));
+  await assert.rejects(ResourceSnapshot.load(directory,{local:{reader:["read"]}}),{code:"EXTENSION_INVALID"});
 });

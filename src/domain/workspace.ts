@@ -1,29 +1,27 @@
-import type { Parameters } from "./shared.js";
-/** Initialization material is not an execution policy or a grant until confirmed and validated. */
-export interface SetupMessage { role: "user" | "assistant"; text: string }
-export interface SetupSource {
-  name: string;
-  kind: "mcp" | "cli";
-  description: string;
-  location: string;
-  missing: string[];
-  id?: string;
-  connection?: Parameters;
-  operations?: Parameters[];
-  discoveryArgs?: string[];
+import type { Parameters, Evidence } from "./shared.js";
+import { sameBinding } from "./shared.js";
+
+export interface WorkspaceSource {
+  connection: Parameters;
+  operations: Parameters[];
 }
-export interface SetupDraft {
-  sources: SetupSource[];
+export interface InitializationRecord {
+  market: string;
+  quoteRef: string;
+  historyRef: string;
+  completedAt: string;
 }
 export interface WorkspaceConfig {
-  version: 1;
-  initialization: "pending" | "complete";
-  messages: SetupMessage[];
-  draft: SetupDraft;
-  enabledSources?: string[];
-  extensions?: Record<string, Record<string, string[]>>;
+  version: 2;
+  initialization: InitializationRecord | null;
+  sources: Record<string, WorkspaceSource>;
+  extensions: Record<string, Record<string, string[]>>;
 }
 export function emptyWorkspace(): WorkspaceConfig {
-  return { version: 1, initialization: "pending", messages: [],
-    draft: { sources: [] } };
+  return { version: 2, initialization: null, sources: {}, extensions: {} };
+}
+
+/** Checks provenance, not service-specific quote or bar semantics. */
+export function validInitializationEvidence(evidence: Evidence | undefined, current: Evidence["binding"]): boolean {
+  return !!evidence?.success && !!evidence.binding && !!current && sameBinding(evidence.binding, current);
 }

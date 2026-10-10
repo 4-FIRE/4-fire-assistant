@@ -1,7 +1,7 @@
 import { createInterface, emitKeypressEvents } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { TerminalApproval } from "./approval.js";
-import { AssistantError, type CommittedView, type RuntimePort } from "../application/ports.js";
+import { AssistantError, type CommittedView, type RuntimePort, type RuntimeStatus } from "../application/ports.js";
 import { AssistantScreen, terminalText } from "./screen.js";
 export { terminalText } from "./screen.js";
 
@@ -53,7 +53,7 @@ export class TerminalAdapter {
   private working = false;
   constructor(private readonly application: RuntimePort,
     private readonly input: Input = process.stdin, private readonly output: Output = process.stdout, private readonly approval?: TerminalApproval,
-    private readonly options: { configure?: (screen: AssistantScreen) => Promise<void>; model?: string; screenFactory?: () => AssistantScreen } = {}) {
+    private readonly options: { configure?: (screen: AssistantScreen) => Promise<void>; model?: string; initializing?: () => boolean; screenFactory?: () => AssistantScreen } = {}) {
     this.renderer = new CommittedRenderer(text => { this.output.write(text); });
   }
   private write(text: string) {
@@ -66,7 +66,7 @@ export class TerminalAdapter {
     this.stopWatch = await this.application.observe(view => {
       this.working = view.working;
       if (!this.screen) { this.renderer.render(view); return; }
-      this.screen.setHeader(`4-FIRE · ${this.options.model ?? "独立期权助手"} · ${view.conversation.title}`);
+      this.screen.setHeader(`4-FIRE · ${this.options.model ?? "交易助手"} · ${view.conversation.title}`);
       this.screen.setConversation(view);
     });
   }
@@ -124,7 +124,7 @@ export class TerminalAdapter {
       case "/decline": {
         const values = argument.split(/\s+/);
         if (!this.approval || values.length !== 2 || !/^[1-9]\d*$/.test(values[1]!)) throw new AssistantError("APPROVAL_COMMAND", "使用 /confirm 或 /decline 当前ID 版本；仅控制面有权回应。");
-        this.approval.respond(values[0]!, Number(values[1]), command === "/confirm"); this.write(command === "/confirm" ? "[已确认这个精确版本；仍须最后重核，不保证会发送]" : "[已拒绝]"); return;
+        this.approval.respond(values[0]!, Number(values[1]), command === "/confirm"); this.write(command === "/confirm" ? "[已确认这个精确版本；仍须程序检查，不保证会发送]" : "[已拒绝]"); return;
       }
       case "/resolve": {
         if (!this.input.isTTY || !this.output.isTTY) throw new AssistantError("RESOLUTION_NEEDS_TTY", "人工结案只接受交互终端控制命令。");
@@ -137,15 +137,26 @@ export class TerminalAdapter {
       default: throw new AssistantError("UNKNOWN_COMMAND", "未知控制命令；使用 /help。");
     }
   }
+  private showStartup(status: RuntimeStatus): void {
+    if (status.needsContinuation) this.write(`未完成任务：${status.work?.content ?? status.work?.requestId}；使用 /continue 确认继续，或 /cancel 停止。`);
+    if (this.options.initializing?.()) this.write("工作区待初始化。请提供目标市场和数据服务资料；交易服务可选。");
+    if (status.blocked.length) this.write("检测到恢复阻塞；记录保留，调度尚未开始。");
+    const business = status.business;
+    if (business && typeof business === "object" && !Array.isArray(business)) {
+      const execution = business.execution;
+      if (execution && typeof execution === "object" && !Array.isArray(execution) && Array.isArray(execution.unsettled) && execution.unsettled.length) {
+        this.write("工作区有待核对交易；新交易写入已阻止，查询和研究仍可进行。\n" + JSON.stringify(execution.unsettled, null, 2));
+      }
+    }
+  }
   async run(once?: () => Promise<unknown>): Promise<void> {
     if (!once && (this.options.screenFactory || this.input === process.stdin && this.output === process.stdout && this.input.isTTY && this.output.isTTY && process.env.TERM !== "dumb")) {
       await this.runScreen(once); return;
     }
-    this.write("4-FIRE Assistant — 独立期权助手；只报告实际证据，分析不授权写入。");
+    this.write("4-FIRE Assistant — 交易研究助手；分析不授权交易。");
     await this.attach();
     const status = await this.application.status();
-    if (status.needsContinuation) this.write("检测到未完成工作；使用 /continue 恢复，或 /cancel 停止。");
-    if (status.blocked.length) this.write("检测到恢复阻塞；记录保留，调度尚未开始。");
+    this.showStartup(status);
     const rl = createInterface({ input: this.input, output: this.output,
       terminal: Boolean(this.input.isTTY && this.output.isTTY) });
     const interrupt = () => {
@@ -244,8 +255,7 @@ export class TerminalAdapter {
       screen.start();
       await this.attach();
       const status = await this.application.status();
-      if (status.needsContinuation) this.write("检测到未完成工作；使用 /continue 恢复，或 /cancel 停止。");
-      if (status.blocked.length) this.write("检测到恢复阻塞；记录保留，调度尚未开始。");
+      this.showStartup(status);
       if (once) launch(async () => { try { await once(); } finally { quit(); } });
       await closed;
     } finally {

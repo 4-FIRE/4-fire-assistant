@@ -14,7 +14,6 @@ export interface ApplicationConfig {
   modelsPath?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   runtime?: { modelTimeoutMs?: number; generationRetries?: number; progressIntervalMs?: number };
-  sources?: Record<string, SourceConnection>;
   research?: { python?: string };
 }
 export function machineConfigDirectory(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
@@ -47,7 +46,7 @@ export function parseModel(value: string): ModelSelection {
 }
 export function parseConfig(value: unknown): ApplicationConfig {
   if (!record(value) || value.version !== 1 ||
-      Object.keys(value).some(key => !["version", "model", "authPath", "modelsPath", "thinkingLevel", "runtime", "sources", "research"].includes(key))) {
+      Object.keys(value).some(key => !["version", "model", "authPath", "modelsPath", "thinkingLevel", "runtime", "research"].includes(key))) {
     throw new AssistantError("INVALID_CONFIG", "配置格式或版本不受支持；原文件未修改。");
   }
   const config: ApplicationConfig = { version: 1 };
@@ -55,19 +54,6 @@ export function parseConfig(value: unknown): ApplicationConfig {
     if (!record(value.research) || Object.keys(value.research).some(k => !["python"].includes(k)) ||
         Object.values(value.research).some(v => typeof v !== "string" || !isAbsolute(v))) invalid();
     config.research = value.research as { python?: string };
-  }
-  if (value.sources !== undefined) {
-    if (!record(value.sources)) invalid();
-    config.sources = {};
-    for (const [id, entry] of Object.entries(value.sources)) {
-      if (!/^[a-z][a-z0-9-]{0,63}$/.test(id) || !record(entry)) invalid();
-      if (entry.transport === "cli") {
-        const { transport: _transport, ...settings } = entry;
-        if ("operations" in settings) invalid();
-        const { operations: _operations, ...connection } = parseCliConfig({ ...settings, operations: [] });
-        config.sources[id] = { transport: "cli", ...connection };
-      } else config.sources[id] = parseConnection(entry);
-    }
   }
   if (value.model !== undefined) {
     if (!record(value.model) || typeof value.model.provider !== "string" ||
@@ -104,6 +90,16 @@ export function parseConfig(value: unknown): ApplicationConfig {
 }
 function invalid(): never { throw new AssistantError("INVALID_CONFIG", "配置无效；原文件未修改，敏感内容不会显示。"); }
 function positiveInteger(value: unknown, max: number): void { if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > max) invalid(); }
+export function parseSourceConnection(value: unknown): SourceConnection {
+  if (!record(value)) invalid();
+  if (value.transport === "cli") {
+    const { transport: _transport, ...settings } = value;
+    if ("operations" in settings) invalid();
+    const { operations: _operations, ...connection } = parseCliConfig({ ...settings, operations: [] });
+    return { transport: "cli", ...connection };
+  }
+  return parseConnection(value);
+}
 function parseConnection(value: unknown): ConnectionConfig {
   if (!record(value) || !["http", "stdio"].includes(String(value.transport))) invalid();
   if (value.timeoutMs !== undefined) positiveInteger(value.timeoutMs, 120000);
@@ -114,7 +110,9 @@ function parseConnection(value: unknown): ConnectionConfig {
     if (value.apiKeyHeader !== undefined && !["X-API-Key", "Authorization"].includes(String(value.apiKeyHeader))) invalid();
   } else {
     if (Object.keys(value).some(k => !["transport", "command", "args", "env", "timeoutMs"].includes(k)) || typeof value.command !== "string" || !value.command.trim()) invalid();
-    if (value.args !== undefined && (!Array.isArray(value.args) || !value.args.every(arg => typeof arg === "string"))) invalid();
+    if (value.args !== undefined && (!Array.isArray(value.args) || !value.args.every(arg => typeof arg === "string" && !arg.includes("\0")))) invalid();
+    if (value.env !== undefined && (!record(value.env) || Object.entries(value.env).some(([key, ref]) =>
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof ref !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)))) invalid();
   }
   return structuredClone(value) as unknown as ConnectionConfig;
 }

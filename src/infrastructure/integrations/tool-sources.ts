@@ -26,12 +26,22 @@ export class ToolSources implements ToolPort {
   }
   requirements(name: string) { const { source, nativeName } = this.resolve(name); return source.requirements?.(nativeName) ?? { reviewRequired: true, confirmationRequired: true as const }; }
   binding(name: string) { const { source, nativeName } = this.resolve(name); return source.binding(nativeName); }
+  preview(operation: OperationSpec) {
+    const { source, nativeName } = this.resolve(operation.name);
+    return { source: operation.name.split("/")[0]!, invocation: source.preview?.({ name: nativeName, parameters: operation.parameters }) ?? { name: nativeName, parameters: operation.parameters } };
+  }
   async refresh(signal?: AbortSignal) {
     // A failed source does not prevent independent sources from serving reads.
-    const entries = [...this.#sources].filter(([id]) => !this.#disabled.has(id));
-    const results = await Promise.allSettled(entries.map(([, source]) => source.refresh(signal)));
-    results.forEach((result, index) => { if (result.status === "rejected") this.#disabled.add(entries[index]![0]); });
     signal?.throwIfAborted();
+    const entries = [...this.#sources];
+    const results = await Promise.allSettled(entries.map(([, source]) => source.refresh(signal)));
+    // Cancellation does not establish whether a source is available.
+    signal?.throwIfAborted();
+    results.forEach((result, index) => {
+      const id = entries[index]![0];
+      if (result.status === "rejected") this.#disabled.add(id);
+      else this.#disabled.delete(id);
+    });
   }
   validate(operation: OperationSpec) {
     const { source, nativeName } = this.resolve(operation.name);

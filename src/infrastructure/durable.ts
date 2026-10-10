@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import type { Message, Models } from "@earendil-works/pi-ai";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import {
   Harness, LiveDoc, configure, createRegistry, defineDoc,
   type Conversation, type ConversationId, type ConversationView,
@@ -14,7 +15,7 @@ import { openApplicationStorage, type ApplicationStorage } from "./storage.js";
 import { requireModel } from "./models.js";
 import { resourceText } from "./resources.js";
 import { BusinessIntegration, type BusinessOptions } from "./business.js";
-import { WorkDoc, json, type StoredRequest } from "./business-documents.js";
+import { TeamDoc, WorkDoc, json, type StoredRequest } from "./business-documents.js";
 import type { Scope } from "../domain/shared.js";
 
 type StoredSession = { id: ConversationId; title: string };
@@ -89,7 +90,9 @@ export class DurableRuntime implements RuntimePort {
       const registry = createRegistry();
       const business = options.business ? await BusinessIntegration.create({ ...options.business, workingDirectory: storage.directory }, options.model) : undefined;
       if (business) registry.install(business.extension);
-      harness = await Harness.open(storage.storage, { models: options.models, registry, ...(options.settings ? { settings: options.settings } : {}) }, context);
+      harness = await Harness.open(storage.storage, { models: options.models, registry,
+        env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? storage.directory, shellEnv: { LANG: "C.UTF-8" } }),
+        ...(options.settings ? { settings: options.settings } : {}) }, context);
       const root = await harness.root(context, { agent: business?.agent("coordinator") ?? {
         model: options.model, tools: [], extensions: [], instructions: resourceText("prompts/runtime/foundation.md").trimEnd(),
       }, init: async (tx, id) => { await tx.doc(WorkDoc, id); } });
@@ -140,10 +143,20 @@ export class DurableRuntime implements RuntimePort {
     const inspection = await this.#harness.inspect(context);
     const request = work?.request ?? null;
     const blocked: string[] = inspection.tasks.flatMap(task => task.state.kind === "blocked" ? [task.state.reason] : []);
-    if (!pending(request) && inspection.submissions.length > 0) blocked.push("work_association_missing");
+    const team = await this.#harness.snapshot(TeamDoc, this.#current.id, context);
+    const unassociated = inspection.submissions.some(submission => {
+      if (submission.conversationId === this.#current.id) {
+        return !pending(request) || submission.requestId !== request!.requestId;
+      }
+      if (!team?.experts.some(expert => expert.conversationId === submission.conversationId)) return false;
+      return !pending(request) || !team.delegations.some(delegation =>
+        delegation.conversationId === submission.conversationId && delegation.requestId === submission.requestId &&
+        delegation.ownerRequestId === request!.requestId);
+    });
+    if (unassociated) blocked.push("work_association_missing");
     return {
       conversation: summary(this.#current),
-      work: request ? { requestId: request.requestId, status: request.status } : null,
+      work: request ? { requestId: request.requestId, status: request.status, content: request.content } : null,
       needsContinuation: pending(request) && !this.#inProcess.has(request!.requestId),
       blocked, unfinishedTasks: inspection.tasks.length,
       ...(this.#business ? { business: await this.#business.status() } : {}),
@@ -154,10 +167,17 @@ export class DurableRuntime implements RuntimePort {
     this.checkOpen();
     return ((await this.#harness.snapshot(WorkspaceDoc, context))?.sessions ?? []).map(summary);
   }
+  private assertRecoverable(status: RuntimeStatus): void {
+    if (status.blocked.includes("work_association_missing")) {
+      throw new AssistantError("RECOVERY_BLOCKED", "当前主会话或专家存在未关联有效请求的输入；请先 /cancel 取消残留工作。记录和外部订单会保留。");
+    }
+    if (status.blocked.length) throw new AssistantError("RECOVERY_BLOCKED", `任务定义存在恢复阻塞：${status.blocked.join("、")}；请检查扩展及版本，记录未修改。`);
+  }
   private async assertIdle(): Promise<void> {
     const status = await this.status();
+    this.assertRecoverable(status);
     const live = await this.#harness.snapshot(LiveDoc, this.#current.id, context);
-    if (pending(status.work) || live?.run || this.#inProcess.size > 0 || status.blocked.length > 0) {
+    if (pending(status.work) || live?.run || this.#inProcess.size > 0) {
       throw new AssistantError("WORK_BUSY", "请等待当前请求，或先 /cancel；重开后的未完成工作使用 /continue。");
     }
   }
@@ -195,7 +215,7 @@ export class DurableRuntime implements RuntimePort {
   async continueWork(): Promise<RunResult> {
     const admission = await this.serialize(async () => {
       const status = await this.status();
-      if (status.blocked.length) throw new AssistantError("RECOVERY_BLOCKED", "恢复存在任务定义或请求关联阻塞；记录未修改。");
+      this.assertRecoverable(status);
       if (!status.needsContinuation) throw new AssistantError("NOTHING_TO_CONTINUE", "没有等待恢复的请求。");
       const conversation = await this.conversation();
       const request = (await this.#harness.snapshot(WorkDoc, conversation.id, context))!.request!;

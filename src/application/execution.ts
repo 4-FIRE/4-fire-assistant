@@ -16,6 +16,7 @@ export interface IntentStore {
 export interface Confirmation {
   intentId: string; revision: number; operation: OperationSpec; binding: ServiceBinding;
   description: string;
+  invocation?: Json;
 }
 export interface ApprovalInteraction {
   confirm(confirmation: Confirmation, signal?: AbortSignal): Promise<boolean>;
@@ -141,7 +142,7 @@ export class ExecutionService {
     return lease;
   }
   private checkReview(intent: ExecutionIntent, scope: Scope): void {
-    if (this.trading.requirements?.(intent.operation.name).reviewRequired !== false) this.approval(intent, scope);
+    this.approval(intent, scope);
   }
   private async locked<T>(id: string, work: () => Promise<T>): Promise<T> {
     if (this.#locks.has(id)) throw new AssistantError("EXECUTION_BUSY", "同一意图已经等待确认或执行，不重复弹窗/发送。");
@@ -163,7 +164,8 @@ export class ExecutionService {
     const existingGrant = this.#authorizations.get(id);
     let confirmed = !!existingGrant && grantMatches(existingGrant, initial, scope, this.env.processEpoch, initial.binding);
     try { if (!confirmed) confirmed = await this.interaction.confirm({ intentId: id, revision: initial.revision, operation: initial.operation,
-      binding: initial.binding, description: this.trading.catalog().find(tool => tool.name === initial.operation.name)?.description ?? "" }, signal); }
+      binding: initial.binding, description: this.trading.catalog().find(tool => tool.name === initial.operation.name)?.description ?? "",
+      ...(this.trading.preview ? { invocation: this.trading.preview(initial.operation) } : {}) }, signal); }
     finally { this.#locks.delete(id); }
     this.guard(scope);
     if (!confirmed) {
@@ -229,7 +231,11 @@ export class ExecutionService {
         if (error instanceof AssistantError && error.code === "PROVEN_NOT_SENT") stored.state = "ProvenNotSent";
         else markUnknown(stored);
         return { result: null, audit: [audit(stored, stored.state === "ProvenNotSent" ? "proven_not_sent" : "result_unknown")] };
-      }); } catch { this.poison(); }
+      }); } catch {
+        this.poison();
+        this.env.emergency("[可靠存储故障] 发送异常后的状态未能可靠保存。禁止新写；重开后先核对真实状态，不得自动重发。");
+        throw new AssistantError("DISPATCH_STATE_UNCOMMITTED", "发送异常后的状态未可靠归档；写入路径已关闭，请先核对真实状态。");
+      }
       return;
     }
     try { await this.store.commit(intents => {
@@ -270,6 +276,6 @@ export class ExecutionService {
   private poison(): void { this.#poisoned = true; this.revoke(); }
   async status(): Promise<Json> {
     return { writePathHealthy: !this.#poisoned, unsettled: (await this.store.list()).filter(unresolved).map(i =>
-      ({ intentId: i.intentId, ownerId: i.ownerId, state: i.state, operation: i.operation.name })), uncommittedReceiptIds: [...this.#uncommitted.keys()] };
+      ({ intentId: i.intentId, revision: i.revision, ownerId: i.ownerId, state: i.state, operation: i.operation.name })), uncommittedReceiptIds: [...this.#uncommitted.keys()] };
   }
 }

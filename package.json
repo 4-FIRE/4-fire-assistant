@@ -2,7 +2,7 @@
   "name": "4-fire-assistant",
   "version": "0.1.0",
   "private": true,
-  "description": "Standalone durable options assistant",
+  "description": "Model-led trading assistant with durable tasks and controlled execution",
   "type": "module",
   "bin": {
     "ffa": "dist/main.js"
@@ -23,7 +23,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "node scripts/build-resources.mjs && tsc -p tsconfig.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
     "start": "node dist/main.js",
@@ -32,12 +32,13 @@
   "dependencies": {
     "@earendil-works/chord": "1.1.0",
     "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-codemode": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "@earendil-works/pi-durable": "1.1.0",
     "@earendil-works/pi-mcp": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "ajv": "8.17.1",
-    "ajv-formats": "3.0.1",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@earendil-works/pi-tui": "1.1.0"
+    "ajv-formats": "3.0.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

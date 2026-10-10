@@ -6,6 +6,6 @@ import type { Parameters } from "../../domain/shared.js";
 export interface WriteResultContract { accepted: Parameters; rejected: Parameters }
 export function classifyWrite(result: NativeObservation, accepted: ValidateFunction, rejected: ValidateFunction): NativeObservation {
   const yes = !!accepted(result.data), no = !!rejected(result.data);
-  const outcome = yes === no ? "unknown" : yes ? "accepted" : "rejected";
+  const outcome = !result.success || result.outcome === "unknown" || yes === no ? "unknown" : yes ? "accepted" : "rejected";
   return { ...result, outcome, success: outcome === "accepted" };
 }

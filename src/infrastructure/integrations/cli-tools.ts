@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ValidateFunction } from "ajv";
 import { compileToolSchema } from "./schema.js";
 import type { DispatchPermit, NativeObservation, ToolPort } from "../../application/business-ports.js";
@@ -28,8 +29,6 @@ export interface CliConfig {
   operations: CliOperation[];
   /** Explicit environment references; values are resolved only by the host. */
   env?: Record<string, string>;
-  /** Files used to select the external target. Changes disable this connection. */
-  bindingFiles?: string[];
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
@@ -37,7 +36,7 @@ function invalid(): never { throw new AssistantError("INVALID_CLI_CONTRACT", "CL
 function schema(value: unknown): Parameters { if (!object(value)) invalid(); canonical(value as Parameters); return value as Parameters; }
 export function parseCliConfig(value: unknown): CliConfig {
   if (!object(value) || typeof value.command !== "string" || !isAbsolute(value.command) ||
-      !Array.isArray(value.operations) || Object.keys(value).some(k => !["command", "operations", "env", "bindingFiles", "timeoutMs", "maxOutputBytes"].includes(k))) invalid();
+      !Array.isArray(value.operations) || Object.keys(value).some(k => !["command", "operations", "env", "timeoutMs", "maxOutputBytes"].includes(k))) invalid();
   const names = new Set<string>();
   const operations = value.operations.map(item => {
     if (!object(item) || typeof item.name !== "string" || !item.name.trim() || item.name !== item.name.trim() || names.has(item.name) ||
@@ -69,15 +68,13 @@ export function parseCliConfig(value: unknown): CliConfig {
     if (resultSchema) compileToolSchema(resultSchema);
     let execution: WriteRequirements | undefined, outcomes: WriteResultContract | undefined;
     if (item.access === "write") {
-      if (!object(item.execution) || typeof item.execution.reviewRequired !== "boolean" || item.execution.confirmationRequired !== true ||
-          Object.keys(item.execution).some(k => !["reviewRequired", "confirmationRequired"].includes(k)) || !object(item.outcomes) ||
-          Object.keys(item.outcomes).some(k => !["accepted", "rejected"].includes(k))) invalid();
-      execution = { reviewRequired: item.execution.reviewRequired, confirmationRequired: true };
-      outcomes = { accepted: schema(item.outcomes.accepted), rejected: schema(item.outcomes.rejected) };
-      for (const value of Object.values(outcomes)) {
-        if (value.type !== "object" || !Array.isArray(value.required) || !value.required.length) invalid();
-        compileToolSchema(value);
-      }
+      if (item.execution !== undefined && (!object(item.execution) || item.execution.reviewRequired !== true || item.execution.confirmationRequired !== true ||
+          Object.keys(item.execution).some(k => !["reviewRequired", "confirmationRequired"].includes(k)))) invalid();
+      if (item.outcomes !== undefined && (!object(item.outcomes) || Object.keys(item.outcomes).some(k => !["accepted", "rejected"].includes(k)))) invalid();
+      execution = { reviewRequired: true, confirmationRequired: true };
+      outcomes = item.outcomes === undefined ? { accepted: { not: {} }, rejected: { not: {} } } :
+        { accepted: schema((item.outcomes as Parameters).accepted), rejected: schema((item.outcomes as Parameters).rejected) };
+      for (const value of Object.values(outcomes)) compileToolSchema(value);
     } else if (item.execution !== undefined || item.outcomes !== undefined) invalid();
     return { name: item.name, description: item.description, access: item.access as "read" | "write", schema: inputSchema, argv,
       ...(execution && outcomes ? { execution, outcomes } : {}),
@@ -85,30 +82,22 @@ export function parseCliConfig(value: unknown): CliConfig {
   });
   if (value.env !== undefined && (!object(value.env) || Object.entries(value.env).some(([key, ref]) =>
     !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof ref !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)))) invalid();
-  if (value.bindingFiles !== undefined && (!Array.isArray(value.bindingFiles) || !value.bindingFiles.every(p => typeof p === "string" && isAbsolute(p)))) invalid();
   for (const [key, max] of [["timeoutMs", 120_000], ["maxOutputBytes", 16 * 1024 * 1024]] as const) {
     if (value[key] !== undefined && (!Number.isInteger(value[key]) || Number(value[key]) < 1 || Number(value[key]) > max)) invalid();
   }
   return structuredClone({ command: value.command, operations,
     ...(value.env ? { env: value.env as Record<string, string> } : {}),
-    ...(value.bindingFiles ? { bindingFiles: value.bindingFiles as string[] } : {}),
     ...(value.timeoutMs ? { timeoutMs: value.timeoutMs as number } : {}),
     ...(value.maxOutputBytes ? { maxOutputBytes: value.maxOutputBytes as number } : {}) });
 }
-async function fileDigest(path: string): Promise<string> {
-  const info = await stat(path);
-  if (!info.isFile() || info.size > 128 * 1024 * 1024) throw new AssistantError("CLI_FILE_UNAVAILABLE", "CLI 入口或绑定文件不是可读取的普通文件。");
-  return createHash("sha256").update(await readFile(path)).digest("hex");
-}
-
 /** Native calls with fixed input binding and one-use write permits. */
 export class CliTools implements ToolPort {
-  readonly #epoch = randomUUID();
+  #epoch = randomUUID();
   readonly #validators = new Map<string, ValidateFunction>();
   readonly #results = new Map<string, ValidateFunction>();
   #ready = true;
   private constructor(private readonly config: CliConfig, private readonly cwd: string,
-    private readonly environment: Record<string, string>, private readonly fingerprint: string) {
+    private readonly environment: Record<string, string>) {
     for (const item of config.operations) {
       this.#validators.set(item.name, compileToolSchema(item.schema));
       if (item.resultSchema) this.#results.set(item.name, compileToolSchema(item.resultSchema));
@@ -122,11 +111,8 @@ export class CliTools implements ToolPort {
       if (env[ref] === undefined) throw new AssistantError("CLI_ENV_MISSING", "CLI 所需环境引用未设置；请在本机配置。");
       environment[key] = env[ref]!;
     }
-    return new CliTools(config, await realpath(cwd), environment, await CliTools.fingerprint(config));
-  }
-  private static async fingerprint(config: CliConfig): Promise<string> {
-    const hashes = await Promise.all([config.command, ...(config.bindingFiles ?? [])].map(async path => ({ path, digest: await fileDigest(path) })));
-    return digest(hashes);
+    await access(config.command, constants.X_OK);
+    return new CliTools(config, await realpath(cwd), environment);
   }
   catalog() { return this.#ready ? this.config.operations.map(item => ({ name: item.name, description: item.description,
     kind: item.access, schema: structuredClone(item.schema), schemaDigest: digest(item.schema) })) : []; }
@@ -140,20 +126,29 @@ export class CliTools implements ToolPort {
   binding(name: string): ServiceBinding {
     const item = this.catalog().find(item => item.name === name);
     if (!item) throw new AssistantError("OPERATION_UNAVAILABLE", "CLI 操作未启用或入口已变化。");
-    return { connectionId: digest({ command: this.config.command, cwd: this.cwd, fingerprint: this.fingerprint, environment: this.environment }),
+    return { connectionId: digest({ command: this.config.command, cwd: this.cwd, environment: this.environment }),
       epoch: this.#epoch, accessDigest: digest(this.config as unknown as Json), schemaDigest: item.schemaDigest };
   }
   async refresh(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    if (!this.#ready) throw new AssistantError("CLI_CHANGED", "CLI 入口或目标配置已变化；重新核对后再启动。");
-    try { if (await CliTools.fingerprint(this.config) === this.fingerprint) return; }
-    catch { /* A removed or unreadable binding is also a change. */ }
-    this.#ready = false;
-    throw new AssistantError("CLI_CHANGED", "CLI 入口或目标配置已变化；当前来源已停用。");
+    try { await access(this.config.command, constants.X_OK); }
+    catch {
+      if (this.#ready) this.#epoch = randomUUID();
+      this.#ready = false;
+      throw new AssistantError("CLI_CHANGED", "CLI 入口不可用；请修复入口后刷新来源目录。");
+    }
+    this.#ready = true;
   }
   validate(operation: OperationSpec): void {
     this.binding(operation.name); canonical(operation.parameters);
     if (!this.#validators.get(operation.name)?.(operation.parameters) || Object.values(operation.parameters).some(value => typeof value === "string" && value.includes("\0"))) throw new AssistantError("SCHEMA_REJECTED", "CLI 参数不符合已确认的输入约定；未启动程序。");
+  }
+  preview(operation: OperationSpec): Json {
+    this.validate(operation);
+    const item = this.config.operations.find(item => item.name === operation.name)!;
+    return { command: this.config.command, cwd: this.cwd,
+      argv: item.argv.map(token => typeof token === "string" ? token : "parameters" in token ? canonical(operation.parameters) : String(operation.parameters[token.parameter])),
+      ...(item.stdin === "json" ? { stdin: canonical(operation.parameters) } : {}), envRefs: this.config.env ?? {} };
   }
   async read(operation: OperationSpec, signal?: AbortSignal): Promise<NativeObservation> {
     if (this.kind(operation.name) !== "read") throw new AssistantError("OPERATION_DENIED", "只读入口不能执行写入。");
@@ -165,7 +160,7 @@ export class CliTools implements ToolPort {
     this.validate(exact); await this.refresh(signal);
     const parameters = canonical(exact.parameters);
     const item = this.config.operations.find(item => item.name === exact.name)!;
-    const args = item.argv.map(token => typeof token === "string" ? token : "parameters" in token ? parameters : String(operation.parameters[token.parameter]));
+    const args = item.argv.map(token => typeof token === "string" ? token : "parameters" in token ? parameters : String(exact.parameters[token.parameter]));
     const raw = await this.run(args, item.stdin === "json" ? parameters : undefined, signal, beforeSpawn);
     let data: Json = raw.stdout || raw.stderr;
     try { data = JSON.parse(String(data)) as Json; } catch { /* Text is a valid read result. */ }

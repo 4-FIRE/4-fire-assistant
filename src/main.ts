@@ -1,22 +1,18 @@
 #!/usr/bin/env node
 import { Research, installResearchRuntime } from "./infrastructure/research.js";
-import { ResourceSnapshot } from "./infrastructure/resources.js";
+import { ResourceSnapshot, seedWorkspaceDocuments } from "./infrastructure/resources.js";
+import { WorkspaceServices } from "./infrastructure/workspace-services.js";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import { dirname, join, isAbsolute } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { AssistantError, type ModelSelection, type RuntimePort } from "./application/ports.js";
-import { metadataTools } from "./application/initialization.js";
-import { sourceConfiguration } from "./infrastructure/source-configuration.js";
+
 import { WorkspaceMemory } from "./infrastructure/memory.js";
 import { dataDirectory, machineConfigDirectory, parseConfig, parseModel, readConfig, writeConfig } from "./infrastructure/config.js";
-import { locateWorkspace, readWorkspace, parseWorkspace } from "./infrastructure/workspace.js";
-import { saveInitialization } from "./infrastructure/complete-initialization.js";
-import { initializationModel } from "./infrastructure/initialization-model.js";
-import { initializationDiscovery } from "./infrastructure/initialization-discovery.js";
-import { openToolSources } from "./infrastructure/tool-contracts.js";
-import { confirmWorkspaceCreation, formatInitializationDraft, runInitialization } from "./interfaces/initialization.js";
+import { locateWorkspace } from "./infrastructure/workspace.js";
+import { confirmWorkspaceCreation } from "./interfaces/workspace.js";
 import { DurableRuntime } from "./infrastructure/durable.js";
 import { createModelRuntime, loginModel, requireModel } from "./infrastructure/models.js";
 import { openApplicationStorage, type ApplicationStorage } from "./infrastructure/storage.js";
@@ -29,7 +25,7 @@ const CLI_OPTIONS = {
   "data-dir": { type: "string" }, model: { type: "string" },
   prompt: { type: "string" }, continue: { type: "boolean" }, help: { type: "boolean" },
   version: { type: "boolean" }, "auth-file": { type: "string" }, "models-file": { type: "string" },
-  "setup-compute": { type: "boolean" }, "compute-status": { type: "boolean" }, "workspace-file": { type: "string" },
+  "setup-compute": { type: "boolean" }, "compute-status": { type: "boolean" },
   configure: { type: "boolean" }, "configure-file": { type: "string" }, login: { type: "string" }, "login-type": { type: "string" }, "list-models": { type: "boolean" },
 } as const;
 const HELP = `ffa [--data-dir ABSOLUTE_PATH] [--model provider/modelId]
@@ -46,10 +42,9 @@ const HELP = `ffa [--data-dir ABSOLUTE_PATH] [--model provider/modelId]
   --models-file PATH     覆盖 Pi 标准模型配置路径（绝对路径）
   --setup-compute        安装固定版本的 Python 计算依赖（需要联网）
   --compute-status       检查共享 Python 计算环境
-  --workspace-file PATH  应用完整工作区接入草案及扩展授权，下次启动生效
   --help / --version
 交互命令：/help /status /experts /intents /confirm ID VERSION /decline ID VERSION /revoke /new /resume /continue /cancel /configure /quit
-独立期权助手：分析和精确授权是不同操作；当前正在完成受控写入闭环。`;
+交易助手：模型自主组织研究；真实交易须独立复核并精确确认。`;
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   let parsed: ReturnType<typeof parseArgs<{ options: typeof CLI_OPTIONS }>>;
@@ -61,32 +56,16 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     const metadata = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
     process.stdout.write(metadata.version + "\n"); return;
   }
-  if (values["setup-compute"] || values["compute-status"] || values["workspace-file"]) {
-    if ([values["setup-compute"], values["compute-status"], !!values["workspace-file"]].filter(Boolean).length !== 1 ||
-        values.prompt || values.continue || values.configure || values["configure-file"] || values.login || values["data-dir"]) {
-      throw new AssistantError("INVALID_ARGUMENTS", "计算或工作区配置命令不能与运行命令混用。");
+  if (values["setup-compute"] || values["compute-status"]) {
+    if (values["setup-compute"] && values["compute-status"] || values.prompt || values.continue || values.configure || values["configure-file"] || values.login || values["data-dir"]) {
+      throw new AssistantError("INVALID_ARGUMENTS", "计算环境命令不能与运行命令混用。");
     }
-    const configDirectory = machineConfigDirectory(), config = await readConfig(configDirectory);
-    const runtimeDirectory = join(dataDirectory(), "runtimes", "compute-0.1.0");
+    const config = await readConfig(machineConfigDirectory());
+    const runtimeDirectory = join(dataDirectory(), "runtimes", "compute-0.2.0");
     if (values["setup-compute"]) {
       await installResearchRuntime(runtimeDirectory, config.research?.python);
-      process.stdout.write("固定版本计算依赖已安装；运行 ffa --compute-status 检查计算环境。\n");
-    } else if (values["workspace-file"]) {
-      if (!isAbsolute(values["workspace-file"])) throw new AssistantError("INVALID_CONFIG", "工作区配置文件需要绝对路径。");
-      const directory = join(process.cwd(), ".ffa");
-      const current = await readWorkspace(directory);
-      const next = parseWorkspace(JSON.parse(await readFile(values["workspace-file"], "utf8")));
-      if (current.initialization !== "complete" || next.initialization !== "complete") throw new AssistantError("INITIALIZATION_REQUIRED", "请先完成对话初始化；配置导入不能跳过初始化。");
-      const storage = await openApplicationStorage(directory);
-      try {
-        await ResourceSnapshot.load(directory, next.extensions);
-        await saveInitialization(directory, configDirectory, next);
-      } finally { await storage.close(); }
-      process.stdout.write("工作区配置已保存；下次启动生效，旧执行许可不恢复。\n");
-    } else {
-      const research = new Research(process.cwd(), { runtimeDirectory, ...config.research });
-      process.stdout.write(JSON.stringify(await research.status(), null, 2) + "\n");
-    }
+      process.stdout.write("共享 Python 环境已安装。\n");
+    } else process.stdout.write(JSON.stringify(await new Research(process.cwd(), { runtimeDirectory }).status(), null, 2) + "\n");
     return;
   }
   const standalone = [values.configure === true, values["configure-file"] !== undefined, values.login !== undefined, values["list-models"] === true].filter(Boolean).length;
@@ -103,7 +82,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const directory = workspaceDirectory ?? configDirectory;
   let storage: ApplicationStorage | undefined;
   let application: RuntimePort | undefined;
-  let sources: Awaited<ReturnType<typeof openToolSources>> | undefined;
+  let services: WorkspaceServices | undefined;
   let terminal: TerminalAdapter | undefined;
   const notify = (message: string) => {
     if (terminal) terminal.notify(message);
@@ -145,34 +124,15 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     }
     const selection: ModelSelection = values.model ? parseModel(values.model) : config.model!;
     requireModel(models, selection);
-    const research = new Research(dirname(directory), { runtimeDirectory: join(dataDirectory(), "runtimes", "compute-0.1.0"), ...config.research });
     storage = await openApplicationStorage(directory);
-    const memory = new WorkspaceMemory(join(storage.directory, "memory"));
-    if (workspaceDirectory) {
-      const workspace = await readWorkspace(storage.directory);
-      if (workspace.initialization !== "complete") {
-        const completed = await runInitialization(workspace, initializationModel(models, selection, await ResourceSnapshot.load(directory, workspace.extensions)),
-          next => saveInitialization(workspaceDirectory, configDirectory, next), initializationDiscovery(process.cwd()), memory);
-        if (!completed) return;
-        config = await readConfig(configDirectory);
-      }
-    }
+    await seedWorkspaceDocuments(directory);
+    const memory = new WorkspaceMemory(join(directory, "memory"));
     const approval = new TerminalApproval(notify);
-    const setup = workspaceDirectory ? {
-      ...metadataTools(initializationDiscovery(process.cwd()), memory, {
-        show: notify,
-        confirmDiscovery: (source, entry, signal) => approval.confirmAction(`发现 ${source.name} 的接口；外部程序必须可信，此次不授予业务权限。`, entry, signal),
-        confirmAction: (description, entry, signal) => approval.confirmAction(description, entry, signal),
-      }),
-      ...sourceConfiguration(directory, configDirectory, memory, (draft, signal) =>
-        approval.confirmAction("修改接入。重启后生效，不授予一次交易许可。", formatInitializationDraft(draft), signal), notify),
-    } : undefined;
-    if (workspaceDirectory) sources = await openToolSources(workspaceDirectory, config.sources ?? {}, process.cwd(), (await readWorkspace(workspaceDirectory)).enabledSources ?? []);
-    const notices = sources?.notices ?? [];
-    if (!sources?.tools.catalog().length) notices.push("未启用工作区工具约定；来源草案不授予调用权限。");
-    for (const notice of notices) notify(notice);
+    const confirmAction = approval.confirmAction.bind(approval);
+    services = await WorkspaceServices.open(directory, confirmAction);
+    const research = new Research(directory, { runtimeDirectory: join(dataDirectory(), "runtimes", "compute-0.2.0") });
     const runtime = await DurableRuntime.open({ directory: storage.directory, storage, models, model: selection,
-      business: { ...(sources ? { trading: sources.tools } : {}), resources: await ResourceSnapshot.load(directory, (await readWorkspace(directory)).extensions), research, memory, ...(setup ? { setup } : {}), approval, emergency: notify, notices, ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : {}) },
+      business: { trading: services, services, confirmAction, resources: await ResourceSnapshot.load(directory, services.extensions), research, memory, approval, emergency: notify, ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : {}) },
       ...(config.runtime ? { settings: {
         stream: { ...(config.runtime.modelTimeoutMs ? { timeoutMs: config.runtime.modelTimeoutMs } : {}) },
         retry: { ...(config.runtime.generationRetries !== undefined ? { maxRetries: config.runtime.generationRetries } : {}) },
@@ -183,6 +143,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     await writeConfig(configDirectory, { ...config, model: selection });
     terminal = new TerminalAdapter(application, process.stdin, process.stdout, approval, {
       model: `${selection.provider}/${selection.modelId}`,
+      initializing: () => !services!.initialized,
       configure: async screen => {
         const resumeInput = screen.suspendInput();
         try {
@@ -210,7 +171,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     } else await terminal.run();
   } finally {
     if (application) await application.close();
-    await sources?.close();
+    await services?.close();
     await storage?.close();
   }
 }

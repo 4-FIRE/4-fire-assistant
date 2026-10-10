@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, readFile, rm, stat, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dataDirectory, parseConfig, parseModel, readConfig, writeConfig } from "../dist/infrastructure/config.js";
+import { dataDirectory, parseConfig, parseModel, readConfig, writeConfig, parseSourceConnection } from "../dist/infrastructure/config.js";
 
 test("default data paths are fixed, ignore relative XDG, and require absolute overrides", () => {
   const home = "/isolated/home";
@@ -22,7 +22,7 @@ test("model id may contain slashes; malformed config does not echo input", () =>
     assert.throws(() => parseConfig({ version: 1, runtime }), { code: "INVALID_CONFIG" });
   }
   for (const url of ["https://user:credential-secret@example.invalid", "https://example.invalid?key=credential-secret"]) {
-    assert.throws(() => parseConfig({ version: 1, sources: { remote: { transport: "http", url } } }),
+    assert.throws(() => parseSourceConnection({ transport: "http", url }),
       error => error.code === "INVALID_CONFIG" && !error.message.includes("credential-secret"));
   }
 });

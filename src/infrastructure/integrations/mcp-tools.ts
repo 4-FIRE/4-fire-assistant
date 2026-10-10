@@ -23,6 +23,7 @@ export class McpTools implements ToolPort {
     if (!tool || !this.kind(name) || !this.connection.connected) throw new AssistantError("OPERATION_UNAVAILABLE", "操作未分类或当前服务未提供可靠 schema。");
     return { connectionId: this.connection.identity, epoch: this.connection.epoch, accessDigest: this.#accessDigest, schemaDigest: tool.schemaDigest };
   }
+  preview(operation: OperationSpec): Json { return { tool: operation.name, parameters: operation.parameters }; }
   refresh(signal?: AbortSignal): Promise<void> { return this.connection.refresh(signal); }
   validate(operation: OperationSpec): void {
     this.binding(operation.name);

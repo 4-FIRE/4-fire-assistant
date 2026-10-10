@@ -33,10 +33,10 @@ test("interactive configuration requires a TTY and rejects conflicting modes",as
 });
 test("configuration command preserves invalid input and never initializes real credentials or services",async t=>{
  const directory=await temp(t),data=join(directory,"data"),source=join(directory,"config.json"),env=isolatedEnv(directory);
- await writeFile(source,JSON.stringify({version:1,sources:{example:{transport:"http",url:"https://example.invalid/mcp",apiKeyEnv:"FIXTURE_KEY"}}}));
+ await writeFile(source,JSON.stringify({version:1,model:{provider:"openai",modelId:"gpt-4.1"},thinkingLevel:"off"}));
  await exec(process.execPath,[cli,"--data-dir",data,"--configure-file",source],{env});
  const saved=JSON.parse(await readFile(join(data,"config.local.json"),"utf8"));
- assert.equal(saved.sources.example.apiKeyEnv,"FIXTURE_KEY");assert.ok(!(await readdir(directory)).includes("pi"));
+ assert.equal(saved.model.modelId,"gpt-4.1");assert.ok(!(await readdir(directory)).includes("pi"));
  await writeFile(source,JSON.stringify({version:1,credential:"credential-secret"}));
  await assert.rejects(exec(process.execPath,[cli,"--data-dir",data,"--configure-file",source],{env}),e=>e.stderr.includes("INVALID_CONFIG")&&!e.stderr.includes("credential-secret"));
  assert.deepEqual(JSON.parse(await readFile(join(data,"config.local.json"),"utf8")),saved);

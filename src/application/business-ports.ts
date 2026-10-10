@@ -14,6 +14,7 @@ export interface ToolPort {
   catalog(): (NativeOperation & { kind?: ToolKind; execution?: WriteRequirements; invocation?: Parameters; resultSchema?: Parameters })[];
   kind(name: string): ToolKind | undefined;
   binding(name: string): ServiceBinding;
+  preview?(operation: OperationSpec): Json;
   refresh(signal?: AbortSignal): Promise<void>;
   validate(operation: OperationSpec): void;
   read(operation: OperationSpec, signal?: AbortSignal): Promise<NativeObservation>;

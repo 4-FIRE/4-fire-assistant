@@ -1,114 +1,96 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
-import { builtInPermissions, type Capability } from "../application/permissions.js";
-import { object } from "../domain/shared.js";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { formatSkillsForPrompt, loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
+import { builtInPermissions, type Capability, type RolePermissions } from "../application/permissions.js";
+import { object } from "../domain/shared.js";
 import { AssistantError } from "../application/ports.js";
 
 export const resourceRoot = fileURLToPath(new URL("../../resources/", import.meta.url));
-interface ResourceManifest { files: { path: string }[] }
-function resourceManifest(): ResourceManifest {
-  return JSON.parse(readFileSync(join(resourceRoot, "manifest.json"), "utf8")) as ResourceManifest;
-}
 export function resourceText(path: string): string {
-  const file = resourceManifest().files.find(file => file.path === path);
-  if (!file || !/^(prompts|references)\/(?:[a-z0-9-]+\/)*[a-z0-9-]+\.(md|json)$/.test(path)) {
-    throw new AssistantError("RESOURCE_DENIED", "只能读取包内已登记资料，不接受文件系统路径。");
-  }
-  return readFileSync(join(resourceRoot, path), "utf8");
+  const absolute = resolve(resourceRoot, path), local = relative(resourceRoot, absolute);
+  if (local.startsWith("..") || !/\.(md|json)$/.test(local)) throw new AssistantError("RESOURCE_DENIED", "资料路径无效。");
+  return readFileSync(absolute, "utf8");
 }
-/** Immutable startup texts. Overrides cannot modify application permissions. */
-export class ResourceSnapshot {
-  readonly roles: import("../application/permissions.js").RolePermissions;
-  private constructor(private readonly texts: ReadonlyMap<string, string>,
-    roles: import("../application/permissions.js").RolePermissions, private readonly rolePaths: ReadonlyMap<string, string>) {
-    this.roles = Object.freeze(Object.fromEntries(Object.entries(roles).map(([id, caps]) => [id, Object.freeze([...caps])])));
-  }
-  static defaults(): ResourceSnapshot {
-    const texts = new Map(resourceManifest().files.map(file => [file.path, resourceText(file.path)]));
-    return new ResourceSnapshot(texts, builtInPermissions, new Map(Object.keys(builtInPermissions).map(id => [id, `prompts/roles/${id}.md`])));
-  }
-  static async load(directory: string, extensions: Record<string, Record<string, string[]>> = {}): Promise<ResourceSnapshot> {
-    const base = ResourceSnapshot.defaults(), texts = new Map(base.texts), paths = new Map(base.rolePaths);
-    const roles: Record<string, readonly Capability[]> = { ...base.roles };
-    for (const [path, value] of await snapshotFiles(join(directory, "resources"))) {
-      if (!texts.has(path)) throw new AssistantError("RESOURCE_UNKNOWN", `未知覆盖资源：${path}`);
-      texts.set(path, value);
-    }
-    if (Object.keys(extensions).length) {
-      try { if ((await lstat(join(directory, "extensions"))).isSymbolicLink()) invalidExtension(); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    }
-    for (const [id, grants] of Object.entries(extensions)) {
-      if (!/^[a-z][a-z0-9-]{0,63}$/.test(id) || !object(grants)) invalidExtension();
-      let files = await snapshotFiles(join(directory, "extensions", id));
-      if (!files.size) files = await snapshotFiles(join(extensionRoot, id));
-      const manifest = JSON.parse(files.get("extension.json") ?? "null") as unknown;
-      if (!object(manifest) || manifest.version !== 1 || manifest.id !== id || !Array.isArray(manifest.roles) ||
-          Object.keys(manifest).some(key => !["version", "id", "roles", "toolRequests"].includes(key))) invalidExtension();
-      const requested = new Set<string>();
-      for (const role of manifest.roles) {
-        if (!object(role) || typeof role.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(role.id) ||
-            typeof role.prompt !== "string" || !role.prompt.endsWith(".md") || !files.has(role.prompt) ||
-            !Array.isArray(role.capabilities) || !role.capabilities.every(cap => ["read", "prepare", "compute"].includes(String(cap)))) invalidExtension();
-        const full = `${id}/${role.id}`;
-        if (requested.has(role.id) || Object.hasOwn(roles, full)) invalidExtension();
-        requested.add(role.id);
-        const approved = Object.hasOwn(grants, role.id) ? grants[role.id] : undefined;
-        if (!approved) continue;
-        if (!Array.isArray(approved) || !approved.every(cap => (role.capabilities as unknown[]).includes(cap))) invalidExtension();
-        roles[full] = [...new Set(approved)] as Capability[];
-        paths.set(full, `extensions/${id}/${role.prompt}`);
-      }
-      if (Object.keys(grants).some(role => !requested.has(role))) invalidExtension();
-      for (const [path, value] of files) if (path.endsWith(".md")) texts.set(`extensions/${id}/${path}`, value);
-    }
-    return new ResourceSnapshot(texts, roles, paths);
-  }
-  promptText(group: "tools" | "runtime", key: string): string {
-    const path = group === "tools" ? "prompts/tools.json" : "prompts/runtime/messages.json";
-    const entries: unknown = JSON.parse(this.texts.get(path) ?? "null");
-    const value = object(entries) && Object.hasOwn(entries, key) ? entries[key] : undefined;
-    if (typeof value !== "string" || !value.trim()) throw new AssistantError("PROMPT_MISSING", "启动快照缺少提示词条目。");
-    return value;
-  }
-  reference(path: string): string {
-    const text = this.texts.get(path);
-    if (!path.endsWith(".md") || text === undefined) throw new AssistantError("RESOURCE_DENIED", "资料不在本次启动快照内。");
-    return text;
-  }
-  instructions(role: string): string {
-    const path = this.rolePaths.get(role);
-    if (!path) throw new AssistantError("ROLE_DENIED", "角色没有启用。");
-    const items = [this.reference(path)];
-    items.push(this.reference("prompts/runtime/contract.md"));
-    return items.map(text => text.trimEnd()).join("\n\n");
+async function optionalText(path: string): Promise<string> {
+  try { return await readFile(path, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""; throw error; }
+}
+/** Product files live in .ffa, never overwrite the host project's AGENTS.md. */
+export async function seedWorkspaceDocuments(directory: string): Promise<void> {
+  for (const path of ["AGENTS.md", "BOOTSTRAP.md", "sources/AGENTS.md"]) {
+    const destination = join(directory, path);
+    const parent = join(destination, "..");
+    await mkdir(parent, { recursive: true });
+    if ((await lstat(parent)).isSymbolicLink()) throw new AssistantError("RESOURCE_SYMLINK", "工作区资料目录不能是符号链接。");
+    try { await writeFile(destination, resourceText(`workspace/${path}`), { flag: "wx", mode: 0o600 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   }
 }
 
-const extensionRoot = fileURLToPath(new URL("../../extensions/", import.meta.url));
-function invalidExtension(): never { throw new AssistantError("EXTENSION_INVALID", "扩展清单或角色授权无效；扩展不能自行授予权限。"); }
-async function snapshotFiles(root: string): Promise<Map<string, string>> {
-  const files = new Map<string, string>();
-  let bytes = 0;
-  async function visit(path: string): Promise<void> {
-    const absolute = path ? join(root, path) : root;
-    let info;
-    try { info = await lstat(absolute); }
-    catch (error) { if (!path && (error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-    if (info.isSymbolicLink()) throw new AssistantError("RESOURCE_SYMLINK", "资源目录与文件不能是符号链接。");
-    if (info.isDirectory()) {
-      for (const entry of await readdir(absolute)) {
-        if (!/^[a-z0-9][a-z0-9.-]*$/.test(entry) || entry === "..") invalidExtension();
-        await visit(path ? path + "/" + entry : entry);
-      }
-    } else {
-      if (!info.isFile() || !/\.(md|json)$/.test(path) || info.size > 1024 * 1024 ||
-          (bytes += info.size) > 8 * 1024 * 1024 || files.size >= 256) invalidExtension();
-      files.set(path, await readFile(absolute, "utf8"));
-    }
+/** Text supplies guidance; only explicit grants supply capabilities. */
+export class ResourceSnapshot {
+  private constructor(readonly roles: RolePermissions, private readonly prompts: ReadonlyMap<string, string>, readonly directory?: string) {}
+  static defaults(): ResourceSnapshot {
+    return new ResourceSnapshot(builtInPermissions, new Map(Object.keys(builtInPermissions).map(role => [role, resourceText(`prompts/roles/${role}.md`)])));
   }
-  await visit("");
-  return files;
+  static async load(directory: string, extensions: Record<string, Record<string, string[]>> = {}): Promise<ResourceSnapshot> {
+    const base = ResourceSnapshot.defaults(), prompts = new Map(base.prompts);
+    const roles: Record<string, readonly Capability[]> = { ...base.roles };
+    for (const role of Object.keys(roles)) {
+      const override = await optionalText(join(directory, "roles", `${role}.md`));
+      if (override.trim()) prompts.set(role, override);
+    }
+    for (const [id, grants] of Object.entries(extensions)) {
+      if (!/^[a-z][a-z0-9-]{0,63}$/.test(id)) invalidExtension();
+      let root = join(directory, "extensions", id);
+      if (!await optionalText(join(root, "extension.json"))) root = fileURLToPath(new URL(`../../extensions/${id}/`, import.meta.url));
+      const manifest: unknown = JSON.parse(await readFile(join(root, "extension.json"), "utf8"));
+      if (!object(manifest) || manifest.id !== id || manifest.version !== 1 || !Array.isArray(manifest.roles)) invalidExtension();
+      const requested = new Set<string>();
+      for (const role of manifest.roles) {
+        if (!object(role) || typeof role.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(role.id) || requested.has(role.id) ||
+            typeof role.prompt !== "string" || !/^[a-zA-Z0-9-]+\.md$/.test(role.prompt) || !Array.isArray(role.capabilities) ||
+            role.capabilities.some(cap => !["read", "prepare", "compute"].includes(String(cap)))) invalidExtension();
+        requested.add(role.id);
+        const approved = grants[role.id];
+        if (!approved) continue;
+        if (!Array.isArray(approved) || approved.some(cap => !(role.capabilities as unknown[]).includes(cap))) invalidExtension();
+        const info = await lstat(join(root, role.prompt));
+        if (!info.isFile() || info.isSymbolicLink()) invalidExtension();
+        roles[`${id}/${role.id}`] = Object.freeze([...new Set(approved)] as Capability[]);
+        prompts.set(`${id}/${role.id}`, await readFile(join(root, role.prompt), "utf8"));
+      }
+      if (Object.keys(grants).some(role => !requested.has(role))) invalidExtension();
+    }
+    return new ResourceSnapshot(Object.freeze(roles), prompts, directory);
+  }
+  promptText(group: "tools" | "runtime", key: string): string {
+    const entries: unknown = JSON.parse(resourceText(group === "tools" ? "prompts/tools.json" : "prompts/runtime/messages.json"));
+    const value = object(entries) ? entries[key] : undefined;
+    if (typeof value !== "string") throw new AssistantError("PROMPT_MISSING", "缺少工具或运行说明。");
+    return value;
+  }
+  instructions(role: string): string {
+    const prompt = this.prompts.get(role);
+    if (!prompt) throw new AssistantError("ROLE_DENIED", "角色未启用。");
+    return prompt + "\n\n" + resourceText("prompts/runtime/contract.md");
+  }
+  async context(initialized: boolean): Promise<string> {
+    const bundled = loadSkillsFromDir({ dir: join(resourceRoot, "skills"), source: "bundled" });
+    const local = this.directory ? loadSkillsFromDir({ dir: join(this.directory, "skills"), source: "workspace" }) : { skills: [], diagnostics: [] };
+    const skills = new Map([...bundled.skills, ...local.skills].map(skill => [skill.name, skill]));
+    const parts = [formatSkillsForPrompt([...skills.values()]), ...[...bundled.diagnostics, ...local.diagnostics].map(item => `技能加载提示：${item.message}`)];
+    if (this.directory) {
+      parts.push(`产品工作区：${this.directory}。相对文件路径以此为准。`);
+      for (const name of ["AGENTS.md", "sources/AGENTS.md", "SOUL.md", ...(!initialized ? ["BOOTSTRAP.md"] : [])]) {
+        const text = await optionalText(join(this.directory, name));
+        if (text) parts.push(`## ${name}\n${text}`);
+      }
+    }
+    parts.push(initialized ? "初始化已完成；按当前任务读取资料并工作。" : "初始化尚未完成；本轮只推进接入、验证和完成确认。不能跳过初始化。");
+    return parts.join("\n\n");
+  }
 }
+function invalidExtension(): never { throw new AssistantError("EXTENSION_INVALID", "扩展清单或授权无效，扩展不能自行提升权限。"); }

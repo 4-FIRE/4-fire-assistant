@@ -5,10 +5,42 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { locateWorkspace, readWorkspace, parseSetupDraft } from "../dist/infrastructure/workspace.js";
+import { locateWorkspace, readWorkspace, parseWorkspace, saveWorkspace } from "../dist/infrastructure/workspace.js";
 import { emptyWorkspace } from "../dist/domain/workspace.js";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
+import { WorkspaceServices } from "../dist/infrastructure/workspace-services.js";
+import { TerminalApproval } from "../dist/interfaces/approval.js";
 const exec = promisify(execFile);
+
+test("initialization distinguishes missing, empty and unreadable required documents before confirmation", async t => {
+  const directory = await temp(t);
+  await saveWorkspace(directory, { ...emptyWorkspace(), sources: { local: {
+    connection: { transport: "cli", command: "/usr/bin/printf" },
+    operations: [{ name: "print", access: "read", roles: ["coordinator"], schema: { type: "object", additionalProperties: false }, argv: ["local input"] }],
+  } } });
+  const approval = new TerminalApproval(undefined, false);
+  const services = await WorkspaceServices.open(directory, approval.confirmAction.bind(approval));
+  t.after(() => services.close());
+  const observation = await services.read({ name: "local/print", parameters: {} });
+  const evidence = { ref: "local-query", operation: "local/print", parameters: {}, success: observation.success,
+    result: observation.data, binding: services.binding("local/print") };
+  const finish = () => services.finish("test", evidence, evidence);
+  const documents = [join(directory, "sources", "local", "GUIDE.md"), join(directory, "AGENTS.md"), join(directory, "sources", "AGENTS.md")];
+  await mkdir(join(directory, "sources", "local"), { recursive: true });
+  for (const path of documents) {
+    await assert.rejects(finish(), { code: "SOURCE_GUIDE_REQUIRED" });
+    await writeFile(path, " \n");
+    await assert.rejects(finish(), { code: "SOURCE_GUIDE_REQUIRED" });
+    await rm(path);
+    await mkdir(path);
+    await assert.rejects(finish(), { code: "SOURCE_GUIDE_UNREADABLE" });
+    await rm(path, { recursive: true });
+    await writeFile(path, "Local test document\n");
+    assert.equal(services.initialized, false);
+    assert.equal((await readWorkspace(directory)).initialization, null);
+  }
+  await assert.rejects(finish(), { code: "APPROVAL_NEEDS_TTY" });
+});
 async function temp(t) {
   const directory = await mkdtemp(join(tmpdir(), "ffa-setup-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -53,13 +85,11 @@ test("concurrent creation during confirmation cannot overwrite another workspace
   assert.deepEqual(await readWorkspace(join(root, ".ffa")), emptyWorkspace());
 });
 
-test("workspace drafts contain only sources; unsupported fields leave stored configuration intact", async t => {
-  const source = { name: "行情", kind: "cli", location: "/test/quotes", description: "", missing: ["输入 schema"] };
-  assert.deepEqual(parseSetupDraft({ sources: [source] }), { sources: [source] });
-  for (const draft of [{ sources: [], objective: "研究" }, { sources: [{ ...source, discovery: { metadata: "forged" } }] }]) {
-    assert.throws(() => parseSetupDraft(draft), { code: "WORKSPACE_INVALID" });
+test("old workspace formats and unsupported fields are rejected without data loss", async t => {
+  for (const value of [{ version: 1, initialization: "pending", draft: { sources: [] } }, { ...emptyWorkspace(), objective: "research" }]) {
+    assert.throws(() => parseWorkspace(value), { code: "WORKSPACE_INVALID" });
     const directory = await locateWorkspace(await temp(t), async () => true);
-    const text = JSON.stringify({ ...emptyWorkspace(), draft });
+    const text = JSON.stringify(value);
     await writeFile(join(directory, "config.json"), text);
     await assert.rejects(readWorkspace(directory), { code: "WORKSPACE_INVALID" });
     assert.equal(await readFile(join(directory, "config.json"), "utf8"), text);

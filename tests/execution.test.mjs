@@ -19,7 +19,7 @@ function intent() {
 }
 const attempt = { attemptId: "attempt", startedAt: "2026-10-10", sourceRef: "tool" };
 
-test("write receipts need exactly one complete outcome match, independent of protocol success", () => {
+test("protocol success is insufficient; receipts need one complete and non-conflicting outcome match", () => {
   const accepted = compileToolSchema({ type: "object", properties: { status: { const: "accepted" }, id: { type: "string", minLength: 1 } }, required: ["status", "id"] });
   const rejected = compileToolSchema({ type: "object", properties: { status: { const: "rejected" } }, required: ["status"] });
   for (const [data, expected] of [
@@ -31,6 +31,8 @@ test("write receipts need exactly one complete outcome match, independent of pro
     const receipt = { success: true, raw: {}, data };
     assert.equal(classifyWrite(receipt, accepted, rejected).outcome, expected);
     assert.equal(classifyWrite(receipt, accepted, accepted).outcome, "unknown");
+    assert.equal(classifyWrite({ ...receipt, success: false }, accepted, rejected).outcome, "unknown");
+    assert.equal(classifyWrite({ ...receipt, outcome: "unknown" }, accepted, rejected).outcome, "unknown");
   }
 });
 
