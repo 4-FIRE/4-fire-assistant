@@ -11,13 +11,31 @@ import { emptyWorkspace } from "../dist/domain/workspace.js";
 import { saveWorkspace } from "../dist/infrastructure/workspace.js";
 import { ResourceSnapshot, seedWorkspaceDocuments } from "../dist/infrastructure/resources.js";
 import { WorkspaceServices } from "../dist/infrastructure/workspace-services.js";
-import { DurableRuntime } from "../dist/infrastructure/durable.js";
+import { DurableRuntime } from "../dist/infrastructure/durable-runtime.js";
 import { TerminalApproval } from "../dist/interfaces/approval.js";
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
-import { WorkDoc, TeamDoc } from "../dist/infrastructure/business-documents.js";
-import { BusinessIntegration } from "../dist/infrastructure/business.js";
+import { WorkDoc, TeamDoc } from "../dist/infrastructure/runtime-documents.js";
+import { BusinessIntegration } from "../dist/infrastructure/assistant-integration.js";
+test("assembled tools retain role permissions and write replay policy", async () => {
+  const integration = await BusinessIntegration.create({}, { provider: "openai", modelId: "gpt-4.1" });
+  const tools = integration.extension.tools;
+  assert.equal(new Set(tools.map(tool => tool.name)).size, tools.length);
+  const executionNames = ["prepare_write", "submit_review", "execute_write", "read_intent"];
+  assert.deepEqual(executionNames.map(name => tools.find(tool => tool.name === name)?.replay),
+    ["safe", "safe", "unsafe", "safe"]);
+  for (const [role, expected] of [
+    ["coordinator", ["prepare_write", "execute_write", "read_intent"]],
+    ["reviewer", ["submit_review", "read_intent"]],
+    ["researcher", ["read_intent"]],
+  ]) {
+    const removed = new Set(integration.agent(role).tools.remove.map(tool => tool.name));
+    assert.deepEqual(executionNames.filter(name => !removed.has(name)), expected);
+    assert.equal(removed.has("delegate_expert"), role !== "coordinator");
+  }
+});
+
 // Admit real SDK work while scheduling is paused, as it can be after a crash.
 const { admitSubmission } = await import(new URL("./harness/submissions.js", import.meta.resolve("@earendil-works/pi-durable")));
 
@@ -81,6 +99,53 @@ test("recovery associates expert submissions with their owner and request; cance
   assert.deepEqual((await runtime.status()).blocked, []);
   assert.equal((await runtime.status()).unfinishedTasks, 0);
   await runtime.newSession();
+});
+
+test("session selection preserves pending model bindings and leaves the active session unchanged on rejection", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "ffa-pending-model-"));
+  const models = createModels(); models.setProvider(openaiProvider());
+  const model = { provider: "openai", modelId: "gpt-4.1" };
+  const changed = { provider: "openai", modelId: "gpt-4.1-mini" };
+  const options = { directory, models, model };
+  let runtime;
+  t.after(async () => { await runtime?.close(); await rm(directory, { recursive: true, force: true }); });
+  runtime = await DurableRuntime.open(options);
+  const idle = (await runtime.status()).conversation;
+  const pending = await runtime.newSession();
+  await runtime.selectSession(idle.id);
+  await runtime.close();
+
+  const storage = await openApplicationStorage(directory);
+  const harness = await Harness.open(storage.storage, { models, registry: createRegistry() }, context);
+  const request = { requestId: "pending-model", status: "admitting", content: "unfinished work", submissionId: null };
+  try {
+    await harness.commit(async tx => { (await tx.doc(WorkDoc, Number(pending.id))).request = request; }, context);
+  } finally { await harness.close(context); await storage.close(); }
+
+  runtime = await DurableRuntime.open({ ...options, model: changed });
+  await assert.rejects(runtime.selectSession(pending.id), { code: "PENDING_MODEL_CHANGE" });
+  assert.equal((await runtime.status()).conversation.id, idle.id);
+  await runtime.close();
+  runtime = await DurableRuntime.open({ ...options, model: changed });
+  assert.equal((await runtime.status()).conversation.id, idle.id);
+  await runtime.close();
+
+  const inspectionStorage = await openApplicationStorage(directory);
+  const inspection = await Harness.open(inspectionStorage.storage, { models, registry: createRegistry() }, context);
+  try {
+    assert.deepEqual((await (await inspection.conversation(Number(pending.id), context)).agent(context)).model, model);
+    assert.deepEqual((await inspection.snapshot(WorkDoc, Number(pending.id), context)).request, request);
+    assert.deepEqual((await (await inspection.conversation(Number(idle.id), context)).agent(context)).model, changed);
+    assert.equal((await inspection.inspect(context)).scheduling, "paused");
+  } finally { await inspection.close(context); await inspectionStorage.close(); }
+
+  runtime = await DurableRuntime.open(options);
+  await runtime.selectSession(pending.id);
+  assert.equal((await runtime.status()).needsContinuation, true);
+  await runtime.close();
+  await assert.rejects(DurableRuntime.open({ ...options, model: changed }), { code: "PENDING_MODEL_CHANGE" });
+  runtime = await DurableRuntime.open(options);
+  assert.equal((await runtime.status()).work.requestId, request.requestId);
 });
 
 test("real durable runtime opens and reopens the unified assistant without scheduling model work", async t => {

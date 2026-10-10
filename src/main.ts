@@ -9,12 +9,12 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { AssistantError, type ModelSelection, type RuntimePort } from "./application/ports.js";
 
-import { WorkspaceMemory } from "./infrastructure/memory.js";
-import { dataDirectory, machineConfigDirectory, parseConfig, parseModel, readConfig, writeConfig } from "./infrastructure/config.js";
+import { WorkspaceMemory } from "./infrastructure/workspace-memory.js";
+import { dataDirectory, machineConfigDirectory, parseConfig, parseModel, readConfig, writeConfig } from "./infrastructure/application-config.js";
 import { locateWorkspace } from "./infrastructure/workspace.js";
 import { confirmWorkspaceCreation } from "./interfaces/workspace.js";
-import { DurableRuntime } from "./infrastructure/durable.js";
-import { createModelRuntime, loginModel, requireModel } from "./infrastructure/models.js";
+import { DurableRuntime } from "./infrastructure/durable-runtime.js";
+import { createModelRuntime, loginModel, requireModel } from "./infrastructure/model-runtime.js";
 import { openApplicationStorage, type ApplicationStorage } from "./infrastructure/storage.js";
 import { TerminalAdapter, CommittedRenderer, userError, terminalText } from "./interfaces/terminal.js";
 import { TerminalApproval } from "./interfaces/approval.js";

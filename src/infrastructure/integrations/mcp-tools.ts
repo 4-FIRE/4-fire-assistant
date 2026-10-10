@@ -1,7 +1,8 @@
 import type { DispatchPermit, NativeObservation, ToolAccess, ToolKind, ToolPort } from "../../application/business-ports.js";
 import { AssistantError } from "../../application/ports.js";
 import type { Json, OperationSpec, Scope, ServiceBinding } from "../../domain/shared.js";
-import { McpConnection, digest, payload } from "./mcp.js";
+import { McpConnection, payload } from "./mcp-connection.js";
+import { digest } from "../digest.js";
 
 /** Service-independent MCP calls. Business data stays opaque. */
 export class McpTools implements ToolPort {

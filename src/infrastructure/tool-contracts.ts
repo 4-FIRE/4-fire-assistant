@@ -1,17 +1,19 @@
 import type { ToolPort, DispatchPermit } from "../application/business-ports.js";
 import { AssistantError } from "../application/ports.js";
 import { object, type OperationSpec, type Scope, type Parameters } from "../domain/shared.js";
-import { CliTools, parseCliConfig, type CliConfig, type CliOperation } from "./integrations/cli-tools.js";
-import { McpConnection, type ConnectionConfig } from "./integrations/mcp.js";
+import { CliTools } from "./integrations/cli-tools.js";
+import { parseCliBinding, type CliBinding } from "./integrations/cli-contract.js";
+import { parseOperationContract, type OperationContract } from "./integrations/operation-contract.js";
+import type { SourceConnection } from "./integrations/connection-config.js";
+import { McpConnection } from "./integrations/mcp-connection.js";
 import { McpTools } from "./integrations/mcp-tools.js";
 import { classifyWrite } from "./integrations/write-result.js";
-import { compileToolSchema } from "./integrations/schema.js";
+import { compileToolSchema } from "./integrations/tool-schema.js";
 
-export type SourceConnection = ConnectionConfig | ({ transport: "cli" } & Omit<CliConfig, "operations">);
 export interface ToolContract {
   version: 1;
   sourceId: string;
-  operations: (Omit<CliOperation, "argv" | "schema"> & { argv?: CliOperation["argv"]; schema?: Parameters; roles: string[] })[];
+  operations: (OperationContract & Partial<CliBinding> & { roles: string[] })[];
 }
 export function parseToolContract(value: unknown): ToolContract {
   if (!object(value) || value.version !== 1 || typeof value.sourceId !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(value.sourceId) ||
@@ -19,12 +21,11 @@ export function parseToolContract(value: unknown): ToolContract {
   const names = new Set<string>();
   const operations = value.operations.map(item => {
     if (!object(item) || !Array.isArray(item.roles) || !item.roles.length || !item.roles.every(role => typeof role === "string" && /^[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)?$/.test(role))) invalid();
-    const { roles, ...native } = item;
-    const checked = parseCliConfig({ command: "/contract-validation", operations: [{ description: "", ...native,
-      schema: native.schema ?? { type: "object" }, argv: native.argv ?? (native.stdin === "json" ? [] : [{ parameters: "json" }]) }] }).operations[0]!;
+    const { roles, argv, stdin, ...native } = item;
+    const checked = parseOperationContract(native);
     if (names.has(checked.name)) invalid(); names.add(checked.name);
-    const { argv, schema, ...rest } = checked;
-    return { ...rest, roles: [...new Set(roles)] as string[], ...(native.argv === undefined ? {} : { argv }), ...(native.schema === undefined ? {} : { schema }) };
+    const binding = parseCliBinding({ argv, stdin }, checked.schema);
+    return { ...checked, ...binding, roles: [...new Set(roles)] as string[] };
   });
   return { version: 1, sourceId: value.sourceId, operations };
 }

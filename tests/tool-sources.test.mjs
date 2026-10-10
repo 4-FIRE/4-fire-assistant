@@ -3,10 +3,11 @@ import { test } from "node:test";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm, copyFile } from "node:fs/promises";
 import { join } from "node:path";
-import { CliTools, parseCliConfig } from "../dist/infrastructure/integrations/cli-tools.js";
+import { CliTools } from "../dist/infrastructure/integrations/cli-tools.js";
+import { parseCliConfig } from "../dist/infrastructure/integrations/cli-contract.js";
 import { parseToolContract, openSource } from "../dist/infrastructure/tool-contracts.js";
 import { parseWorkspaceSource, saveWorkspace, readWorkspace } from "../dist/infrastructure/workspace.js";
-import { parseSourceConnection } from "../dist/infrastructure/config.js";
+import { parseSourceConnection } from "../dist/infrastructure/integrations/connection-config.js";
 import { validInitializationEvidence, emptyWorkspace } from "../dist/domain/workspace.js";
 import { ToolSources } from "../dist/infrastructure/integrations/tool-sources.js";
 
@@ -66,6 +67,50 @@ test("native contracts reject ambiguous argv and implicit credentials; trading r
   assert.equal(mcp.operations[0].schema, undefined);
   assert.throws(() => parseWorkspaceSource("local", { connection: { transport: "cli", command: "/cli" }, operations: [{ name: "query", access: "read", roles: ["coordinator"] }] }));
   assert.throws(() => parseSourceConnection({ transport: "stdio", command: "program", env: { KEY: "secret value" } }));
+});
+
+test("CLI bindings preserve JSON channels and reject ambiguous or unbound inputs", () => {
+  const jsonSchema = { type: "object" };
+  for (const binding of [{ argv: [{ parameters: "json" }] }, { argv: [], stdin: "json" }]) {
+    const input = { ...operation, schema: jsonSchema, ...binding };
+    const cli = parseCliConfig({ command: "/cli", operations: [input] }).operations[0];
+    const source = parseToolContract(contract([{ ...input, roles: ["coordinator"] }])).operations[0];
+    assert.deepEqual(cli.argv, binding.argv);
+    assert.equal(cli.stdin, binding.stdin);
+    assert.deepEqual(source, { ...cli, roles: ["coordinator"] });
+  }
+  for (const change of [
+    { argv: [{ parameters: "json" }], stdin: "json" },
+    { argv: [{ parameters: "json" }, { parameter: "value" }] },
+    { argv: [{ parameter: "value" }, { parameter: "value" }] },
+    { argv: ["%s"] },
+    { schema: { ...operation.schema, required: [] } },
+    { schema: { ...operation.schema, additionalProperties: true } },
+  ]) {
+    const input = { ...operation, ...change };
+    assert.throws(() => parseCliConfig({ command: "/cli", operations: [input] }));
+    assert.throws(() => parseToolContract(contract([{ ...input, roles: ["coordinator"] }])));
+  }
+  const remote = parseToolContract(contract([{ name: "query", access: "read", roles: ["coordinator"] }])).operations[0];
+  assert.equal(Object.hasOwn(remote, "argv"), false);
+  assert.equal(Object.hasOwn(remote, "schema"), false);
+  assert.throws(() => parseCliConfig({ command: "/cli", operations: [{ ...remote, description: "" }] }));
+});
+
+test("connection parsing validates CLI settings without accepting operation contracts", () => {
+  const connection = { transport: "cli", command: "/cli", env: { TOKEN: "TOKEN_ENV" }, timeoutMs: 1000, maxOutputBytes: 1024 };
+  assert.deepEqual(parseSourceConnection(connection), connection);
+  for (const change of [
+    { operations: [] }, { command: "relative" }, { env: { TOKEN: "secret value" } },
+    { timeoutMs: 0 }, { maxOutputBytes: 16 * 1024 * 1024 + 1 },
+  ]) assert.throws(() => parseSourceConnection({ ...connection, ...change }));
+});
+
+test("operation access requires a string in both CLI and source contracts", () => {
+  for (const access of [["read"], ["write"], null, 1, {}]) {
+    assert.throws(() => parseCliConfig({ command: "/cli", operations: [{ ...operation, access }] }));
+    assert.throws(() => parseToolContract(contract([{ ...operation, access, roles: ["coordinator"] }])));
+  }
 });
 
 test("invalid source ids do not invalidate a fresh workspace; corrected MCP inputs save without migration", async t => {

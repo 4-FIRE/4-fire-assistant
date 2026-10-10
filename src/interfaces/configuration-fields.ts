@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { AssistantError } from "../application/ports.js";
-import { parseConfig } from "../infrastructure/config.js";
-import type { ApplicationConfig } from "../infrastructure/config.js";
+import { parseConfig } from "../infrastructure/application-config.js";
+import type { ApplicationConfig } from "../infrastructure/application-config.js";
 import type { AssistantScreen } from "./screen.js";
 
 type Values = Record<string, string>;

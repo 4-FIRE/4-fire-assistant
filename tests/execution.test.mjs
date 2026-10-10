@@ -5,7 +5,7 @@ import {
 } from "../dist/domain/execution.js";
 
 import { classifyWrite } from "../dist/infrastructure/integrations/write-result.js";
-import { compileToolSchema } from "../dist/infrastructure/integrations/schema.js";
+import { compileToolSchema } from "../dist/infrastructure/integrations/tool-schema.js";
 
 const scope = { ownerId: 1, requestId: "request" };
 const binding = { connectionId: "service", epoch: "epoch", accessDigest: "access", schemaDigest: "schema" };

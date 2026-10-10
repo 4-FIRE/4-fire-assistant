@@ -3,37 +3,34 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import {
-  AssistantEntry, LiveDoc, configure, defineExtension, defineTask, defineTool,
+  LiveDoc, defineExtension, defineTool,
   type AgentChange, type ConversationId, type Extension, type Harness, type ToolExecutionApi, type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { AssistantError, type ModelSelection } from "../application/ports.js";
 import type { ExpertSummary, Report, ToolPort } from "../application/business-ports.js";
 import { can, requireCapability, type Capability } from "../application/permissions.js";
 import { ExecutionService, type ApprovalInteraction } from "../application/execution.js";
-import { ExecutionViolation, type ExecutionIntent, type ReviewDecision } from "../domain/execution.js";
-import { DurableIntentStore } from "./intents.js";
-import { digest } from "./integrations/mcp.js";
-import { ExpertService, type DelegationInput, type DelegatedWork, type ExpertPort } from "../application/experts.js";
+import { DurableIntentStore } from "./durable-intent-store.js";
+import { digest } from "./digest.js";
+import { ExpertService, type DelegationInput } from "../application/experts.js";
 import { ReportService } from "../application/reports.js";
 import { canonical, type Evidence, type Json, type Parameters, type Role, type Scope } from "../domain/shared.js";
-import { ArtifactDoc, ExpertDoc, RoundDoc, TeamDoc, WorkDoc, json, type Delegation } from "./business-documents.js";
+import { ArtifactDoc, ExpertDoc, RoundDoc, TeamDoc, WorkDoc, json } from "./runtime-documents.js";
 import type { Research } from "./research.js";
 import { ResourceSnapshot } from "./resources.js";
 import type { MemoryPort } from "../application/memory.js";
 import type { WorkspaceServices, ConfirmAction } from "./workspace-services.js";
 import { fileTools } from "./file-tools.js";
 import { codemodeTools } from "./codemode.js";
-import { WorkspaceMemory } from "./memory.js";
+import { WorkspaceMemory } from "./workspace-memory.js";
 import { memoryTools, callMemory } from "./memory-tools.js";
 import { setupTools } from "./setup-tools.js";
 import { join } from "node:path";
+import { durableExpertPort, ExpertAnchor } from "./durable-expert-port.js";
+import { executionTools } from "./execution-tools.js";
+import { result, toolError } from "./tool-result.js";
 
 const context = BACKGROUND_CONTEXT;
-const Anchor = defineTask<null, { phase: "done" }, null>({
-  name: "fire.expert-anchor", version: 1, initial: () => ({ phase: "done" }),
-  phases: { done: (_task, runtime, ctx) => runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
-  abort: (_task, runtime, ctx) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
-});
 export interface BusinessOptions {
   trading?: ToolPort;
   notices?: string[];
@@ -48,11 +45,7 @@ export interface BusinessOptions {
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 const nativeParameters = Type.Record(Type.String(), Type.Unknown());
-function result(value: unknown, isError = false) { return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: json(value), isError }; }
-function toolError(error: unknown, fallback: string) { return result({ error: error instanceof AssistantError || error instanceof ExecutionViolation ? error.code : "BUSINESS_TOOL_FAILED",
-  message: error instanceof AssistantError || error instanceof ExecutionViolation ? error.message : fallback }, true); }
-
-/** SDK machinery only. Business selection and reference access are application use cases. */
+/** Assembles tools and agents; guards requests and stores shared evidence. */
 export class BusinessIntegration {
   #extension: Extension;
   get extension(): Extension { return this.#extension; }
@@ -107,7 +100,11 @@ export class BusinessIntegration {
         replay: "safe", executionMode: "parallel",
         execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
           options.services?.requireInitialized();
-          const service = new ExpertService(this.expertPort(api, ctx), this.#resources.roles);
+          const service = new ExpertService(durableExpertPort(api, ctx, {
+            resources: this.#resources, trading: options.trading,
+            execution: () => this.execution(), harness: this.#harness!,
+            agent: role => this.agent(role), scope: (api, ctx) => this.scope(api, ctx),
+          }), this.#resources.roles);
           const report = await service.delegate(scope, `delegate:${api.taskId}`, args as DelegationInput);
           return result({ expertId: report.expertId, reportRef: report.ref, status: report.status, summary: report.content.slice(0, 8000),
             truncated: report.content.length > 8000, evidenceRefs: report.evidence.map(e => e.ref) }, report.status !== "answered");
@@ -161,51 +158,14 @@ export class BusinessIntegration {
         }) }),
     );
     tools.push(...codemodeTools((api, ctx) => this.scope(api, ctx)));
-    tools.push(
-      defineTool({ name: "prepare_write", description: this.#resources.promptText("tools", "prepare_write"),
-        parameters: Type.Object({ operation: Type.String(), parameters: nativeParameters, objectiveRef: Type.String({ minLength: 1, maxLength: 4096 }) }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          options.services?.requireInitialized();
-          canonical(args.parameters as Json);
-          const intent = await this.execution().prepare(scope, { name: args.operation, parameters: json(args.parameters) as Parameters }, args.objectiveRef, await this.roundEvidence(api, scope, ctx));
-          return result({ intentId: intent.intentId, revision: intent.revision, state: intent.state, operation: intent.operation, binding: intent.binding,
-            requirements: this.#options.trading!.requirements?.(intent.operation.name),
-            schema: this.#options.trading!.catalog().find(t => t.name === intent.operation.name)?.schema, authorized: false });
-        }) }),
-      defineTool({ name: "submit_review", description: this.#resources.promptText("tools", "submit_review"),
-        parameters: Type.Object({ intentId: Type.String(), decision: Type.Object({ action: Type.Union([Type.Literal("APPROVE"), Type.Literal("REJECT")]) }, { additionalProperties: false }) }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          const round = await api.snapshot(RoundDoc, api.conversationId, scope.roundId, ctx), expert = await api.snapshot(ExpertDoc, api.conversationId, ctx);
-          if (scope.role !== "reviewer" || round?.intentId !== args.intentId) throw new AssistantError("REVIEW_SCOPE_DENIED", "复核必须对应当前专家的实际意图/轮次。");
-          const team = await api.snapshot(TeamDoc, scope.ownerId as ConversationId, ctx), identity = team?.experts.find(e => e.conversationId === scope.conversationId);
-          if (!identity) throw new AssistantError("REVIEW_SCOPE_DENIED", "独立复核身份缺失。");
-          const provided: Evidence[] = [];
-          for (const ref of expert?.allowedRefs ?? []) {
-            const value = (await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, ref, ctx))?.value;
-            if (value && typeof value === "object" && !Array.isArray(value)) {
-              if ("scope" in value) provided.push(value as unknown as Evidence);
-              else if ("evidence" in value && Array.isArray(value.evidence)) provided.push(...value.evidence as unknown as Evidence[]);
-            }
-          }
-          canonical(args.decision as unknown as Json);
-          const intent = await this.execution().inspect(scope, args.intentId);
-          const decision: ReviewDecision = { action: args.decision.action, operation: intent.operation };
-          const outcome = await this.execution().submitReview(scope, args.intentId, identity.expertId, decision, await this.roundEvidence(api, scope, ctx), provided);
-          await api.commit(async tx => { (await tx.doc(RoundDoc, api.conversationId, scope.roundId, json(scope))).decision = json({ ...outcome, decision }); }, context);
-          return result(outcome, args.decision.action === "APPROVE" && !outcome.accepted);
-        }) }),
-      defineTool({ name: "execute_write", description: this.#resources.promptText("tools", "execute_write"),
-        parameters: Type.Object({ intentId: Type.String() }, { additionalProperties: false }), replay: "unsafe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => {
-          options.services?.requireInitialized();
-          const intent = await this.execution().execute(scope, args.intentId, `tool:${api.taskId}`, ctx.abortSignal);
-          return this.intentResult(api, scope, intent);
-        }) }),
-      defineTool({ name: "read_intent", description: this.#resources.promptText("tools", "read_intent"),
-        parameters: Type.Object({ intentId: Type.String() }, { additionalProperties: false }), replay: "safe",
-        execute: async (args, api, ctx) => this.run(api, ctx, async scope => this.intentResult(api, scope, await this.execution().inspect(scope, args.intentId))) }),
-    );
-    this.#extension = defineExtension({ name: "fire.business", tools, tasks: [Anchor], sections: [
+    tools.push(...executionTools({
+      resources: this.#resources, services: options.services, trading: options.trading,
+      execution: () => this.execution(),
+      run: (api, ctx, call) => this.run(api, ctx, call),
+      evidence: (api, scope, operation, parameters, value, success, binding, raw) =>
+        this.evidence(api, scope, operation, parameters, value, success, binding, raw),
+    }));
+    this.#extension = defineExtension({ name: "fire.business", tools, tasks: [ExpertAnchor], sections: [
       { key: "fire-workspace", render: () => this.#resources.context(this.#options.services?.initialized ?? true) },
     ] });
   }
@@ -235,20 +195,6 @@ export class BusinessIntegration {
   async recover(): Promise<void> { await this.#execution?.recover(); }
   revoke(): void { this.#execution?.revoke(); }
   private execution(): ExecutionService { if (!this.#execution) throw new AssistantError("TRADING_UNAVAILABLE", "未连接已核实交易服务；不能写入或编造结果。"); return this.#execution; }
-  private async roundEvidence(api: ToolExecutionApi, scope: Scope, ctx: Context): Promise<Evidence[]> {
-    const round = await api.snapshot(RoundDoc, api.conversationId, scope.roundId, ctx), evidence: Evidence[] = [];
-    for (const ref of round?.evidenceRefs ?? []) {
-      const value = (await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, ref, ctx))?.value;
-      if (value) evidence.push(value as unknown as Evidence);
-    }
-    return evidence;
-  }
-  private async intentResult(api: ToolExecutionApi, scope: Scope, intent: ExecutionIntent) {
-    const receipt = await this.evidence(api, scope, intent.operation.name, intent.operation.parameters, json(intent), intent.observation?.success ?? false, intent.binding);
-    return result({ intentId: intent.intentId, revision: intent.revision, state: intent.state, operation: intent.operation, attempt: intent.attempt,
-      observation: intent.observation, reconciliation: intent.reconciliation, receiptRef: receipt.ref,
-      warning: this.#resources.promptText("runtime", "intentStatus") }, ["DispatchStarted", "Unknown", "ProvenNotSent", "Abandoned"].includes(intent.state) || intent.observation?.success === false);
-  }
   agent(role: Role): AgentChange {
     if (!Object.hasOwn(this.#prompts, role)) throw new AssistantError("ROLE_DENIED", "角色未启用。");
     const requirements: Record<string, Capability> = { delegate_expert: "delegate", prepare_write: "prepare", execute_write: "execute",
@@ -293,113 +239,6 @@ export class BusinessIntegration {
       round.evidenceRefs.push(receipt.ref);
     }, context);
     return receipt;
-  }
-  private expertPort(api: ToolExecutionApi, ctx: Context): ExpertPort {
-    const lookup = async (work: DelegatedWork) => {
-      const team = await api.snapshot(TeamDoc, api.conversationId, ctx);
-      const delegation = team?.delegations.find(d => d.key === work.key);
-      if (!delegation) throw new AssistantError("DELEGATION_MISSING", "委派关联缺失；不能创建替代任务。");
-      return delegation;
-    };
-    return {
-      reserve: async (scope, key, input) => {
-        let challenge: ExecutionIntent | undefined;
-        if (input.intentId) {
-          challenge = input.role === "reviewer" ? (await this.execution().beginReview(scope, input.intentId, key)).intent : await this.execution().inspect(scope, input.intentId);
-          const rootRound = await api.snapshot(RoundDoc, scope.ownerId as ConversationId, scope.requestId, ctx);
-          input = { ...input, reportRefs: [...new Set([...(input.reportRefs ?? []), ...challenge.preparationEvidence.map(e => e.ref), ...(rootRound?.evidenceRefs ?? [])])],
-            goal: `${input.goal}\n\n${this.#resources.promptText("runtime", "intentSnapshot")}${JSON.stringify({ intentId: challenge.intentId, revision: challenge.revision, operation: challenge.operation, binding: challenge.binding,
-              schema: this.#options.trading?.catalog().find(t => t.name === challenge!.operation.name)?.schema,
-              service: this.#options.trading?.status?.(), previousReview: null })}` };
-        }
-        for (const ref of input.reportRefs ?? []) {
-          if (!await api.snapshot(ArtifactDoc, scope.ownerId as ConversationId, ref, ctx)) throw new AssistantError("REPORT_UNAVAILABLE", "提供的报告不属于本主会话。");
-        }
-        const delegation = await api.commit(async tx => {
-          const team = await tx.doc(TeamDoc, scope.ownerId as ConversationId);
-          const existing = team.delegations.find(d => d.key === key);
-          if (existing) return json(existing) as unknown as Delegation;
-          let expert = input.expertId ? team.experts.find(e => e.expertId === input.expertId && e.role === input.role) : undefined;
-          if (input.expertId && !expert) throw new AssistantError("EXPERT_UNAVAILABLE", "该专家不属于本会话或角色不匹配。");
-          if (expert && ((await tx.doc(LiveDoc, expert.conversationId)).run || expert.active)) {
-            // A cancelled main request has already aborted the expert; retain identity/history and open a new round.
-            const previous = team.delegations.find(d => d.roundId === expert!.active);
-            const work = await tx.doc(WorkDoc, scope.ownerId as ConversationId);
-            if ((await tx.doc(LiveDoc, expert.conversationId)).run || previous?.ownerRequestId === work.request?.requestId) {
-              throw new AssistantError("EXPERT_BUSY", "该专家正在处理另一委派；请选择等待或新实例。");
-            }
-          }
-          if (!expert) {
-            const anchor = await tx.createTask(Anchor, null, { conversationId: scope.ownerId as ConversationId, ownership: { kind: "conversation" }, background: true });
-            const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
-            await configure(tx, child.id, this.agent(input.role));
-            expert = { expertId: randomUUID(), role: input.role, conversationId: child.id, purpose: input.goal, reportRefs: [], active: null };
-            team.experts.push(expert);
-            // Chord adopts values by clone; mutate the draft, not the pre-push plain object.
-            expert = team.experts[team.experts.length - 1]!;
-          }
-          const roundId = key;
-          const binding = await tx.doc(ExpertDoc, expert.conversationId);
-          Object.assign(binding, { role: input.role, ownerId: scope.ownerId, requestId: scope.requestId, roundId, allowedRefs: input.reportRefs ?? [] });
-          const roundScope = { ...scope, conversationId: expert.conversationId, role: input.role, roundId };
-          const round = await tx.doc(RoundDoc, expert.conversationId, roundId, json(roundScope));
-          round.intentId = input.intentId ?? null;
-          const delegation: Delegation = { key, expertId: expert.expertId, conversationId: expert.conversationId,
-            ownerId: scope.ownerId as ConversationId, ownerRequestId: scope.requestId, role: input.role,
-            goal: input.goal, requestId: key, roundId, submissionId: null, reportRef: null };
-          expert.active = roundId;
-          team.delegations.push(delegation);
-          return json(delegation) as unknown as Delegation;
-        }, ctx);
-        return { key, expertId: delegation.expertId, roundId: delegation.roundId };
-      },
-      deliver: async work => {
-        const delegation = await lookup(work);
-        if (delegation.reportRef) return;
-        await this.scope(api, ctx); // Also executes during safe replay, not only in a hook.
-        const child = await api.conversation(delegation.conversationId, ctx);
-        if (!child) throw new AssistantError("EXPERT_MISSING", "专家会话缺失，不能替代。");
-        const submission = await child.submit({ type: "input", content: delegation.goal,
-          requestId: delegation.requestId, whenBusy: "reject" }, ctx);
-        await api.commit(async tx => {
-          const stored = (await tx.doc(TeamDoc, api.conversationId)).delegations.find(d => d.key === work.key)!;
-          stored.submissionId = submission.id;
-        }, ctx);
-      },
-      collect: async work => {
-        const delegation = await lookup(work);
-        if (delegation.reportRef) return (await api.snapshot(ArtifactDoc, delegation.ownerId, delegation.reportRef, ctx))!.value as unknown as Report;
-        if (delegation.submissionId === null) throw new AssistantError("DELEGATION_UNADMITTED", "委派尚未完成投递。");
-        const submission = await this.#harness!.submission(delegation.submissionId, ctx);
-        if (!submission) throw new AssistantError("SUBMISSION_MISSING", "专家输入身份不存在；不能重复生成替代输入。");
-        const settled = await submission.wait(ctx);
-        const round = await api.snapshot(RoundDoc, delegation.conversationId, delegation.roundId, ctx);
-        const evidence: Evidence[] = [];
-        for (const ref of round?.evidenceRefs ?? []) {
-          const receipt = await api.snapshot(ArtifactDoc, delegation.ownerId, ref, ctx);
-          if (receipt) evidence.push(receipt.value as unknown as Evidence);
-        }
-        return api.commit(async tx => {
-          const team = await tx.doc(TeamDoc, delegation.ownerId);
-          const expert = team.experts.find(e => e.expertId === delegation.expertId)!;
-          const stored = team.delegations.find(d => d.key === work.key)!;
-          let content = "专家未交付最终回答；不能据此否定此前工具回执。";
-          if (settled.status === "done" && settled.type === "input") {
-            const answer = await tx.entry(AssistantEntry, settled.answer);
-            const body = answer?.model?.[0]?.content ?? [];
-            content = typeof body === "string" ? body : body.filter(part => part.type === "text").map(part => part.text).join("");
-          }
-          const report: Report = { ref: `report:${work.key}`, ownerId: delegation.ownerId, requestId: delegation.ownerRequestId,
-            expertId: delegation.expertId, role: delegation.role, createdAt: new Date().toISOString(), content, evidence,
-            status: settled.status === "done" ? "answered" : settled.reason === "aborted" ? "cancelled" : "unanswered" };
-          await tx.doc(ArtifactDoc, delegation.ownerId, report.ref, json(report));
-          stored.reportRef = report.ref;
-          if (!expert.reportRefs.includes(report.ref)) expert.reportRefs.push(report.ref);
-          if (expert.active === work.roundId) expert.active = null;
-          return report;
-        }, ctx);
-      },
-    };
   }
   async status() { return { workspace: this.#options.services?.status() ?? null, execution: this.#execution ? await this.#execution.status() : { configured: false }, trading: this.#options.trading?.status?.() ?? { configured: !!this.#options.trading },
     research: this.#options.research ? await this.#options.research.status() : { available: false }, notices: this.#options.notices ?? [] }; }

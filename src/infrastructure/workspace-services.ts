@@ -5,7 +5,7 @@ import type { ToolPort, DispatchPermit } from "../application/business-ports.js"
 import { canonical, type Evidence, type Json, type OperationSpec, type Scope } from "../domain/shared.js";
 import { validInitializationEvidence, type WorkspaceConfig, type WorkspaceSource } from "../domain/workspace.js";
 import { parseWorkspaceSource, readWorkspace, saveWorkspace } from "./workspace.js";
-import { parseSourceConnection } from "./config.js";
+import { parseSourceConnection } from "./integrations/connection-config.js";
 import { openSource, parseToolContract } from "./tool-contracts.js";
 import { ToolSources } from "./integrations/tool-sources.js";
 

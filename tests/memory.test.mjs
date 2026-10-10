@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, rm, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorkspaceMemory } from "../dist/infrastructure/memory.js";
+import { WorkspaceMemory } from "../dist/infrastructure/workspace-memory.js";
 
 async function workspace(t) {
   const root = await mkdtemp(join(tmpdir(), "ffa-memory-"));

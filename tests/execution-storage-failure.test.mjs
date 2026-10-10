@@ -9,9 +9,9 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ExecutionService } from "../dist/application/execution.js";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
-import { DurableIntentStore } from "../dist/infrastructure/intents.js";
+import { DurableIntentStore } from "../dist/infrastructure/durable-intent-store.js";
 import { CliTools } from "../dist/infrastructure/integrations/cli-tools.js";
-import { digest } from "../dist/infrastructure/integrations/mcp.js";
+import { digest } from "../dist/infrastructure/digest.js";
 import { TerminalApproval } from "../dist/interfaces/approval.js";
 
 test("dispatch failure with a closed real store reports an error, closes writes and preserves recovery records", async t => {

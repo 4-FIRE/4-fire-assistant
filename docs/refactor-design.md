@@ -394,16 +394,16 @@ CLI 返回码为零或 MCP 协议成功都不能独立证明交易受理。批�
 | `src/infrastructure/initialization-model.ts` | 删除手写模型循环、工具分发和另一套对话历史 |
 | `src/interfaces/initialization.ts` | 合并日常终端交互，保留必要确认展示 |
 | `initialization-discovery.ts`、`setup-tools.ts`、`complete-initialization.ts`、`source-configuration.ts` | 合并重复接入逻辑；保留安装、发现、权限确认、验证记录和完成工具 |
-| `src/infrastructure/durable.ts` | 复用 SDK 任务与恢复；检查重复请求状态和转发包装，不降低恢复粒度 |
-| `src/infrastructure/business.ts` | 拆清工具注册、专家委派与交易适配；不再作为业务流程汇集点 |
-| `business-documents.ts`、`application/experts.ts`、`application/reports.ts` | 保留任务身份、专家生命周期和结果引用；简化普通报告与证据访问层 |
+| `src/infrastructure/durable-runtime.ts` | 复用 SDK 任务与恢复；检查重复请求状态和转发包装，不降低恢复粒度 |
+| `src/infrastructure/assistant-integration.ts` | 拆清工具注册、专家委派与交易适配；不再作为业务流程汇集点 |
+| `runtime-documents.ts`、`application/experts.ts`、`application/reports.ts` | 保留任务身份、专家生命周期和结果引用；简化普通报告与证据访问层 |
 | `src/infrastructure/resources.ts`、`resources/manifest.json`、`scripts/build-resources.mjs` | 优先复用技能和文档加载能力；重评自建清单与覆盖机制，不新增文件哈希校验 |
 | `src/application/execution.ts`、`src/domain/execution.ts` | 保留精确操作、复核、许可、防重、未知义务；移除不必要业务编排 |
-| `src/infrastructure/intents.ts`、`storage.ts` | 保留可靠账本与存储所有权；复用 SDK，不丢失发送前记录 |
+| `src/infrastructure/durable-intent-store.ts`、`storage.ts` | 保留可靠账本与存储所有权；复用 SDK，不丢失发送前记录 |
 | `src/infrastructure/tool-contracts.ts`、`integrations/` | 保留 CLI/MCP 原生接入；缩减为必要配置、权限和交易回执约定 |
 | `src/infrastructure/research.ts`、`python/` | 改为普通 Python 运行与产物保存；必要算法保留为库，移除统一研究请求限制 |
-| `memory.ts`、`memory-tools.ts` | 保留知识读写；接入手册作为知识本体，不复制另一套同内容记忆 |
-| `workspace.ts`、`config.ts`、`domain/workspace.ts` | 重定义最小状态，移除旧初始化消息、草案格式的兼容负担 |
+| `workspace-memory.ts`、`memory-tools.ts` | 保留知识读写；接入手册作为知识本体，不复制另一套同内容记忆 |
+| `workspace.ts`、`application-config.ts`、`domain/workspace.ts` | 重定义最小状态，移除旧初始化消息、草案格式的兼容负担 |
 | `src/interfaces/terminal.ts`、`screen.ts`、认证与配置界面 | 保留独立终端体验及确认控制；复用已有库，不另建通用终端框架 |
 | `resources/prompts/roles/` | 保留三角色职责；初始化职责转入首次引导，不另建初始化 Agent |
 | `resources/prompts/workflows/` | 按专业方法重写为可裁剪技能，不能只改文件名 |
@@ -553,7 +553,7 @@ CLI 返回码为零或 MCP 协议成功都不能独立证明交易受理。批�
 ## 17. 参考依据
 
 - 用户在本轮 Q1—Q28 的选择，以及对完整重构共识的最终确认。
-- 当前代码：`src/main.ts`、初始化链路、`durable.ts`、`business.ts`、执行与接入模块、研究计算与资源文档。
+- 当前代码：`src/main.ts`、初始化链路、`durable-runtime.ts`、`assistant-integration.ts`、执行与接入模块、研究计算与资源文档。
 - 已安装 Pi 1.1.0：`@earendil-works/pi-durable/README.md`。
 - 已安装 Pi 1.1.0：`pi-coding-agent/docs/sdk.md`、`skills.md`、`codemode.md`，以及 SDK 的技能、上下文文件、codemode/MCP 示例。
 - [OpenClaw 工作区](https://docs.openclaw.ai/concepts/agent-workspace)：借鉴文件职责，不复制整个平台。

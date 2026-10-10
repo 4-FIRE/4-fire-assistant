@@ -12,10 +12,10 @@ import {
   type RunResult, type RuntimePort, type RuntimeStatus, type TranscriptMessage, type WorkSummary,
 } from "../application/ports.js";
 import { openApplicationStorage, type ApplicationStorage } from "./storage.js";
-import { requireModel } from "./models.js";
+import { requireModel } from "./model-runtime.js";
 import { resourceText } from "./resources.js";
-import { BusinessIntegration, type BusinessOptions } from "./business.js";
-import { TeamDoc, WorkDoc, json, type StoredRequest } from "./business-documents.js";
+import { BusinessIntegration, type BusinessOptions } from "./assistant-integration.js";
+import { TeamDoc, WorkDoc, json, type StoredRequest } from "./runtime-documents.js";
 import type { Scope } from "../domain/shared.js";
 
 type StoredSession = { id: ConversationId; title: string };
@@ -108,14 +108,7 @@ export class DurableRuntime implements RuntimePort {
       }, context);
       const runtime = new DurableRuntime(harness, storage, active, options.model, business);
       await business?.recover();
-      const conversation = await runtime.conversation();
-      const work = await harness.snapshot(WorkDoc, conversation.id, context);
-      const agent = await conversation.agent(context);
-      if (pending(work?.request) && agent.model &&
-          (agent.model.provider !== options.model.provider || agent.model.modelId !== options.model.modelId)) {
-        throw new AssistantError("PENDING_MODEL_CHANGE", "未完成工作仍绑定原模型；请先用原模型恢复或取消。");
-      }
-      if (!pending(work?.request)) await conversation.configure(business?.agent("coordinator") ?? { model: options.model }, context);
+      await runtime.configureConversation(await runtime.conversation());
       // Opening and inspection do not enable SDK scheduling.
       return runtime;
     } catch (error) {
@@ -132,8 +125,19 @@ export class DurableRuntime implements RuntimePort {
     this.#operations = result.then(() => undefined, () => undefined);
     return result;
   }
-  private async conversation(): Promise<Conversation> {
-    const found = await this.#harness.conversation(this.#current.id, context);
+  private async configureConversation(conversation: Conversation): Promise<void> {
+    const work = await this.#harness.snapshot(WorkDoc, conversation.id, context);
+    if (pending(work?.request)) {
+      const agent = await conversation.agent(context);
+      if (agent.model && (agent.model.provider !== this.#model.provider || agent.model.modelId !== this.#model.modelId)) {
+        throw new AssistantError("PENDING_MODEL_CHANGE", "未完成工作仍绑定原模型；请先用原模型恢复或取消。");
+      }
+      return;
+    }
+    await conversation.configure(this.#business?.agent("coordinator") ?? { model: this.#model }, context);
+  }
+  private async conversation(id = this.#current.id): Promise<Conversation> {
+    const found = await this.#harness.conversation(id, context);
     if (!found) throw new AssistantError("CONVERSATION_MISSING", "已登记会话不存在；不能以新会话替代。");
     return found;
   }
@@ -289,16 +293,14 @@ export class DurableRuntime implements RuntimePort {
   async selectSession(id: string): Promise<ConversationSummary> {
     return this.serialize(async () => {
       await this.assertIdle();
-      const selected = await this.#harness.commit(async tx => {
-        const workspace = await tx.doc(WorkspaceDoc);
-        const selected = workspace.sessions.find(session => String(session.id) === id);
-        if (!selected) throw new AssistantError("SESSION_UNAVAILABLE", "该主会话不存在。");
-        workspace.activeId = selected.id;
-        return { ...selected };
+      const workspace = await this.#harness.snapshot(WorkspaceDoc, context);
+      const selected = workspace?.sessions.find(session => String(session.id) === id);
+      if (!selected) throw new AssistantError("SESSION_UNAVAILABLE", "该主会话不存在。");
+      await this.configureConversation(await this.conversation(selected.id));
+      await this.#harness.commit(async tx => {
+        (await tx.doc(WorkspaceDoc)).activeId = selected.id;
       }, context);
-      this.#current = selected;
-      const conversation = await this.conversation();
-      await conversation.configure(this.#business?.agent("coordinator") ?? { model: this.#model }, context);
+      this.#current = { ...selected };
       return summary(selected);
     });
   }

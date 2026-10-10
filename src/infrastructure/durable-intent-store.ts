@@ -3,7 +3,7 @@ import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 import type { IntentAudit, IntentStore } from "../application/execution.js";
 import type { ExecutionIntent } from "../domain/execution.js";
 import { canonical } from "../domain/shared.js";
-import { IntentDoc, IntentIndexDoc, json } from "./business-documents.js";
+import { IntentDoc, IntentIndexDoc, json } from "./runtime-documents.js";
 
 /** Index, aggregate and audit share one Durable commit, independent of cancelled agent context. */
 export class DurableIntentStore implements IntentStore {

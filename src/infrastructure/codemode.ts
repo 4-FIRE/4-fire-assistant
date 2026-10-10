@@ -5,7 +5,7 @@ import { defineDoc, defineDocFamily, defineTool, type ToolExecutionApi, type Too
 import { CodemodeSandbox, parseCodemodeSource, renderDeclarations, type CodemodeTool } from "@earendil-works/pi-codemode";
 import { AssistantError } from "../application/ports.js";
 import type { Json } from "../domain/shared.js";
-import { json } from "./business-documents.js";
+import { json } from "./runtime-documents.js";
 
 const Runs = defineDocFamily<{ script: string; calls: Record<string, { name: string; arguments: Json; state: string; result: Json }>; state: string }, null>({
   kind: "fire.codemode-run", version: 1, scope: "conversation", family: true, history: "latest", fork: "initial",

@@ -1,5 +1,5 @@
 import type { Models } from "@earendil-works/pi-ai";
-import type { ApplicationConfig } from "./config.js";
+import type { ApplicationConfig } from "./application-config.js";
 import { AssistantError, type ModelSelection, type AuthenticationInteraction } from "../application/ports.js";
 
 export async function createModelRuntime(config: ApplicationConfig) {

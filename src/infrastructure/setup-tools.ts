@@ -3,13 +3,12 @@ import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { AssistantError } from "../application/ports.js";
 import type { WorkspaceServices, ConfirmAction } from "./workspace-services.js";
 import { discoverSource, installPackage, locateCli } from "./source-discovery.js";
-import { parseSourceConnection } from "./config.js";
-import { json } from "./business-documents.js";
+import { parseSourceConnection } from "./integrations/connection-config.js";
+import { result } from "./tool-result.js";
 import { dirname } from "node:path";
 
 const native = Type.Record(Type.String(), Type.Unknown());
 const sourceId = Type.String({ pattern: "^[a-z][a-z0-9-]{0,63}$", description: "来源 id：以小写字母开头，只含小写字母、数字和连字符，长度 1–64；不能用下划线。" });
-function result(value: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: json(value) }; }
 export function setupTools(services: WorkspaceServices, confirm: ConfirmAction): ToolRegistration[] {
   return [
     defineTool({ name: "locate_cli", description: "查找 PATH 中的命令，不执行。", parameters: Type.Object({ command: Type.String() }), replay: "safe",

@@ -52,7 +52,7 @@ export class ResourceSnapshot {
       for (const role of manifest.roles) {
         if (!object(role) || typeof role.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(role.id) || requested.has(role.id) ||
             typeof role.prompt !== "string" || !/^[a-zA-Z0-9-]+\.md$/.test(role.prompt) || !Array.isArray(role.capabilities) ||
-            role.capabilities.some(cap => !["read", "prepare", "compute"].includes(String(cap)))) invalidExtension();
+            role.capabilities.some(cap => typeof cap !== "string" || !["read", "prepare", "compute"].includes(cap))) invalidExtension();
         requested.add(role.id);
         const approved = grants[role.id];
         if (!approved) continue;

@@ -1,16 +1,14 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { McpClient, StdioTransport, StreamableHttpTransport, type Tool, type CallToolResult, type McpTransport } from "@earendil-works/pi-mcp";
 import type { ValidateFunction } from "ajv";
-import { compileToolSchema } from "./schema.js";
+import { compileToolSchema } from "./tool-schema.js";
 import type { ToolAccess } from "../../application/business-ports.js";
 import { AssistantError } from "../../application/ports.js";
 import { canonical, object, type Json, type Parameters } from "../../domain/shared.js";
+import type { ConnectionConfig } from "./connection-config.js";
+import { digest } from "../digest.js";
 
-export type ConnectionConfig =
-  | { transport: "http"; url: string; apiKeyEnv?: string; apiKeyHeader?: "X-API-Key" | "Authorization"; timeoutMs?: number }
-  | { transport: "stdio"; command: string; args?: string[]; env?: Record<string, string>; timeoutMs?: number };
 export interface NativeTool { name: string; description: string; schema: Parameters; schemaDigest: string }
-export function digest(value: Json): string { return createHash("sha256").update(canonical(value)).digest("hex"); }
 export function payload(result: CallToolResult): Json {
   if (result.structuredContent) return result.structuredContent as Json;
   for (const part of result.content) {
@@ -18,10 +16,6 @@ export function payload(result: CallToolResult): Json {
     try { return JSON.parse(part.text) as Json; } catch { /* Preserve non-JSON content below. */ }
   }
   return JSON.parse(JSON.stringify(result)) as Json;
-}
-export function successful(result: CallToolResult): boolean {
-  const data = payload(result);
-  return result.isError !== true && !(object(data) && (data.success === false || data.isError === true));
 }
 /** Only this integration owns transports. No implicit reconnect or call retry. */
 export class McpConnection {

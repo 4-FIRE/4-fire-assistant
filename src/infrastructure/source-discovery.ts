@@ -3,8 +3,8 @@ import { access, realpath, stat, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { AssistantError } from "../application/ports.js";
-import { McpConnection } from "./integrations/mcp.js";
-import { parseSourceConnection } from "./config.js";
+import { McpConnection } from "./integrations/mcp-connection.js";
+import { parseSourceConnection } from "./integrations/connection-config.js";
 
 export async function locateCli(command: string): Promise<string> {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/.test(command)) throw new AssistantError("CLI_NAME_INVALID", "请提供单独的命令名。");

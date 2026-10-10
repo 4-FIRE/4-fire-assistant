@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { AssistantError } from "../application/ports.js";
 import { emptyWorkspace, type WorkspaceConfig, type WorkspaceSource } from "../domain/workspace.js";
 import { object, type Parameters } from "../domain/shared.js";
-import { parseSourceConnection } from "./config.js";
+import { parseSourceConnection } from "./integrations/connection-config.js";
 import { parseToolContract } from "./tool-contracts.js";
 
 function invalid(): never { throw new AssistantError("WORKSPACE_INVALID", "工作区 config.json 结构无效；原文件未修改。请检查配置，不要删除工作区。"); }
@@ -36,7 +36,7 @@ export function parseWorkspace(value: unknown): WorkspaceConfig {
       !["market", "quoteRef", "historyRef", "completedAt"].every(key => typeof initialization[key] === "string" && String(initialization[key]).trim()))) invalid();
   for (const [id, grants] of Object.entries(value.extensions)) {
     if (!idPattern.test(id) || !object(grants) || Object.entries(grants).some(([role, caps]) =>
-      !idPattern.test(role) || !Array.isArray(caps) || caps.some(cap => !["read", "prepare", "compute"].includes(String(cap))))) invalid();
+      !idPattern.test(role) || !Array.isArray(caps) || caps.some(cap => typeof cap !== "string" || !["read", "prepare", "compute"].includes(cap)))) invalid();
   }
   return { version: 2, initialization: initialization as WorkspaceConfig["initialization"],
     sources: Object.fromEntries(Object.entries(value.sources).map(([id, source]) => [id, parseWorkspaceSource(id, source)])),

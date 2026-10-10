@@ -7,7 +7,7 @@ import {Harness,createRegistry} from '@earendil-works/pi-durable';
 import {createModels} from '@earendil-works/pi-ai/models';
 import {BACKGROUND_CONTEXT as context} from '@earendil-works/chord/context';
 import {openApplicationStorage} from '../dist/infrastructure/storage.js';
-import {DurableIntentStore} from '../dist/infrastructure/intents.js';
+import {DurableIntentStore} from '../dist/infrastructure/durable-intent-store.js';
 test('actual Durable intent index/aggregate/audit commit is atomic, detached from proxies and survives reopen',async t=>{
  const directory=await mkdtemp(join(tmpdir(),'4fire-intent-store-'));t.after(()=>rm(directory,{recursive:true,force:true}));
  let storage=await openApplicationStorage(directory),harness=await Harness.open(storage.storage,{models:createModels(),registry:createRegistry()},context);await harness.root(context);

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { ResourceSnapshot } from "../dist/infrastructure/resources.js";
 import { fileMutationPolicy } from "../dist/infrastructure/file-tools.js";
 import { can } from "../dist/application/permissions.js";
+import { parseWorkspace } from "../dist/infrastructure/workspace.js";
+import { emptyWorkspace } from "../dist/domain/workspace.js";
 
 async function temp(t) {
   const directory = await mkdtemp(join(tmpdir(), "ffa-resources-"));
@@ -22,6 +24,17 @@ test("default roles and extension grants cannot exceed requested capabilities",a
   assert.equal(can("strategy-maintainer/maintainer","read",resources.roles),true);
   await assert.rejects(ResourceSnapshot.load(directory,{"strategy-maintainer":{maintainer:["execute"]}}),{code:"EXTENSION_INVALID"});
 });
+test("workspace grants and extension capabilities reject non-string values", async t => {
+  const directory = await temp(t), root = join(directory, "extensions", "local");
+  await mkdir(root, { recursive: true });
+  for (const capability of [["read"], null, 1, {}]) {
+    assert.throws(() => parseWorkspace({ ...emptyWorkspace(), extensions: { local: { reader: [capability] } } }), { code: "WORKSPACE_INVALID" });
+    await writeFile(join(root, "extension.json"), JSON.stringify({ id: "local", version: 1,
+      roles: [{ id: "reader", prompt: "reader.md", capabilities: [capability] }] }));
+    await assert.rejects(ResourceSnapshot.load(directory, { local: {} }), { code: "EXTENSION_INVALID" });
+  }
+});
+
 test("ordinary files, state and long-term instructions use distinct write policies, including aliases",async t=>{
   const directory = await temp(t), outside = await temp(t);
   assert.equal(await fileMutationPolicy(directory,"projects/study/result.json"),"ordinary");

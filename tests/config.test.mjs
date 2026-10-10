@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { mkdtemp, readFile, rm, stat, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dataDirectory, parseConfig, parseModel, readConfig, writeConfig, parseSourceConnection } from "../dist/infrastructure/config.js";
+import { dataDirectory, parseConfig, parseModel, readConfig, writeConfig } from "../dist/infrastructure/application-config.js";
+import { parseSourceConnection } from "../dist/infrastructure/integrations/connection-config.js";
 
 test("default data paths are fixed, ignore relative XDG, and require absolute overrides", () => {
   const home = "/isolated/home";
@@ -26,6 +27,20 @@ test("model id may contain slashes; malformed config does not echo input", () =>
       error => error.code === "INVALID_CONFIG" && !error.message.includes("credential-secret"));
   }
 });
+test("configuration enums reject non-string values without coercion", () => {
+  for (const thinkingLevel of [["high"], null, 1, {}]) {
+    assert.throws(() => parseConfig({ version: 1, thinkingLevel }), { code: "INVALID_CONFIG" });
+  }
+  assert.equal(parseConfig({ version: 1, thinkingLevel: "high" }).thinkingLevel, "high");
+  for (const transport of [["stdio"], null, 1, {}]) {
+    assert.throws(() => parseSourceConnection({ transport, command: "program" }), { code: "INVALID_CONFIG" });
+  }
+  for (const apiKeyHeader of [["Authorization"], null, 1, {}]) {
+    assert.throws(() => parseSourceConnection({ transport: "http", url: "https://example.invalid", apiKeyHeader }), { code: "INVALID_CONFIG" });
+  }
+  assert.equal(parseSourceConnection({ transport: "http", url: "https://example.invalid", apiKeyHeader: "Authorization" }).apiKeyHeader, "Authorization");
+});
+
 test("config is private and atomic; invalid JSON is preserved, not replaced", async t => {
   const directory = await mkdtemp(join(tmpdir(), "4fire-config-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

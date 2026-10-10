@@ -8,6 +8,8 @@
 
 pi-durable Harness 是唯一任务运行时。WorkDoc 关联用户请求与 SDK submission；TeamDoc 保存专家身份、委派及报告引用，不建立第二套研究阶段机。
 
+`src/infrastructure/assistant-integration.ts` 装配工具与角色，保留请求守卫和共享证据保存。`durable-expert-port.ts` 实现专家端口，管理专家会话、委派与报告归档。`execution-tools.ts` 处理交易工具及复核接入，核心执行规则仍在应用层 `ExecutionService`。
+
 Pi 提供模型、终端组件、普通文件工具和技能加载函数。codemode 直接使用独立 pi-codemode 沙箱，不创建第二个 AgentSession，也不假设编码代理扩展可直接装入 durable。
 
 ## 模型与文档
@@ -25,6 +27,8 @@ WorkspaceServices 持有当前工作区来源。连接、移除和完成初始�
 来源目录刷新会重试已禁用来源，成功后重新启用。取消刷新不会改变禁用状态。CLI 入口恢复后使用新的连接版本，旧证据和许可不会重新生效。连接已关闭或配置需要变更时，仍须修复该来源。
 
 MCP 保留原生工具和 schema，CLI 使用显式 argv 或标准输入绑定。权限只描述可调用角色及 read/write 分类，没有统一行情字段。
+
+`application-config.ts` 只处理本机应用配置。`integrations/connection-config.ts` 校验 CLI/MCP 连接，`operation-contract.ts` 校验通用操作约定，`cli-contract.ts` 校验 CLI 参数绑定。通用约定不补造 CLI 命令、argv 或 schema。`digest.ts` 提供执行身份所需的 JSON 摘要，不依赖 MCP。
 
 source_read 保存来源绑定、实际参数、时间和回执。finish_initialization 读取本主会话的证据，检查成功状态、当前连接及手册，再请求用户确认。模型解释数据语义；程序不伪装成通用行情解析器。
 
@@ -55,6 +59,8 @@ codemode 和 Python 标记 unsafe，不自动重放。旧运行若不属于当�
 ## 恢复与可信边界
 
 打开工作区不启用 SDK 调度。用户确认继续后恢复原请求及原专家任务，已完成报告继续使用，不重新生成。停止、退出和业务结案是不同操作。
+
+启动和切换会话使用同一项模型检查。未完成请求保留原会话配置；当前模型不匹配时拒绝进入。切换失败不改变活动会话。没有未完成请求的会话才应用当前模型配置。
 
 请求关联检查包括当前主会话及其专家，不把其他主会话的输入当作当前请求的残留。当前范围的残留输入由用户执行 `/cancel` 级联取消；打开工作区不会自动取消任务。SDK 任务定义阻塞仍单独报告。
 
