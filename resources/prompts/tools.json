@@ -1,7 +1,7 @@
 {
   "current_time": "取得当前 UTC 时间，按任务使用明确市场时区。",
   "source_catalog": "列出当前角色获准的 CLI/MCP 原生操作、schema 和执行要求。不提供统一行情字段。",
-  "source_read": "调用获准的原生查询，保存实际结果并返回 evidenceRef。可在初始化时验证服务；不能执行交易写入。",
+  "source_read": "直接调用已接入且配置为 read 的原生查询，无需逐次确认。单条、批量查询均复用现有权限，不重复发现或配置服务。保存实际结果并返回 evidenceRef。可在初始化时验证服务；不能执行交易写入。",
   "read_report": "按引用和偏移读取本主会话报告或原始回执；摘要不代替完整证据。",
   "delegate_expert": "按需委派持久专家，省略 expertId 创建实例，提供 expertId 追问原专家。reportRefs 传入必要材料。复核精确交易时提供 intentId。",
   "prepare_write": "准备一个精确原生交易调用，不授权、不发送。之后委派 reviewer 复核，再请求用户确认。",

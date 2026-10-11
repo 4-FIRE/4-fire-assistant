@@ -45,6 +45,31 @@ test("initialization distinguishes missing, empty and unreadable required docume
   }
   await assert.rejects(finish(), { code: "APPROVAL_NEEDS_TTY" });
 });
+test("configured reads run singly, in parallel and after reopen without interactive approval", async t => {
+  const root = await temp(t), directory = join(root, ".ffa");
+  await mkdir(directory);
+  const query = { name: "print", access: "read", roles: ["coordinator"],
+    schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
+    argv: ["%s", { parameter: "value" }] };
+  await saveWorkspace(directory, { ...emptyWorkspace(), sources: { local: {
+    connection: { transport: "cli", command: "/usr/bin/printf" },
+    operations: [query, { ...query, name: "write", access: "write" }],
+  } } });
+  const approval = new TerminalApproval(undefined, false);
+  for (let open = 0; open < 2; open++) {
+    const services = await WorkspaceServices.open(directory, approval.confirmAction.bind(approval));
+    try {
+      const read = value => services.read({ name: "local/print", parameters: { value } });
+      assert.equal((await read("single")).data, "single");
+      const values = ["one", "two", "three"];
+      const results = await Promise.all(values.map(read));
+      assert.deepEqual(results.map(result => result.data), values);
+      assert.ok(results.every(result => result.success));
+      await assert.rejects(services.read({ name: "local/write", parameters: { value: "blocked" } }), { code: "OPERATION_DENIED" });
+    } finally { await services.close(); }
+  }
+});
+
 async function temp(t) {
   const directory = await mkdtemp(join(tmpdir(), "ffa-setup-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

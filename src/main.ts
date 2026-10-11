@@ -177,5 +177,11 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
-  main().catch(error => { process.stderr.write(userError(error) + "\n"); process.exitCode = 1; });
+  void main().catch(error => { process.stderr.write(userError(error) + "\n"); process.exitCode = 1; }).then(() => {
+    // main() has awaited cleanup. Flush output before ending the executable;
+    // residual SDK handles must not keep an idle CLI alive. Imported main() never exits its host.
+    process.stdout.write("", () => {
+      process.stderr.write("", () => { process.exit(process.exitCode ?? 0); });
+    });
+  });
 }

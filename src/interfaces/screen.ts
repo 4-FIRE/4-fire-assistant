@@ -271,7 +271,7 @@ export class AssistantScreen {
     });
   }
 
-  async choose(title: string, items: SelectItem[], signal?: AbortSignal): Promise<string | undefined> {
+  async choose(title: string, items: SelectItem[], signal?: AbortSignal, options: { filter?: boolean } = {}): Promise<string | undefined> {
     if (signal?.aborted) return undefined;
     const search = new Input({ prompt: "筛选 > " });
     const choices = items.map(item => ({ ...item, label: terminalText(item.label), ...(item.description ? { description: terminalText(item.description) } : {}) }));
@@ -292,7 +292,7 @@ export class AssistantScreen {
       set focused(value) { search.focused = value; },
       render: width => {
         const height = this.dialogContentHeight();
-        const showSearch = height >= 5, showHint = height >= 3, showCounter = height >= 6;
+        const showSearch = options.filter !== false && height >= 5, showHint = height >= 3, showCounter = height >= 6;
         const controls = Number(showSearch) + Number(showHint) + Number(showCounter);
         const lines = label.render(width);
         const titleRows = Math.min(lines.length, Math.max(0, Math.min(Math.floor(height / 2), height - controls - 1)));
@@ -306,14 +306,14 @@ export class AssistantScreen {
         }
         return [...lines.slice(titleOffset, titleOffset + titleRows), ...(showSearch ? search.render(width) : []),
           ...list.render(width).slice(0, available + Number(showCounter)),
-          ...(showHint ? [truncateToWidth(lines.length > titleRows ? "PgUp/PgDn 查看说明 · Enter 确认 · Esc 返回" : "↑↓ 选择 · Enter 确认 · 输入筛选 · Esc 返回", width)] : [])];
+          ...(showHint ? [truncateToWidth(lines.length > titleRows ? "PgUp/PgDn 查看说明 · Enter 确认 · Esc 返回" : `↑↓ 选择 · Enter 确认${options.filter !== false ? " · 输入筛选" : ""} · Esc 返回`, width)] : [])];
       },
       invalidate: () => { label.invalidate(); search.invalidate(); list.invalidate(); },
       handleInput: data => {
         if (matchesKey(data, "pageUp")) titleOffset -= 2;
         else if (matchesKey(data, "pageDown")) titleOffset += 2;
         else if ((["up", "down", "enter", "escape"] as const).some(key => matchesKey(data, key))) list.handleInput(data);
-        else { search.handleInput(data); list = createList(); }
+        else if (options.filter !== false) { search.handleInput(data); list = createList(); }
         this.tui.requestRender();
       },
     };

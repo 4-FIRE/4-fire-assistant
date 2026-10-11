@@ -116,6 +116,18 @@ MCP 使用服务原生 schema。CLI 还需声明对象 schema 和 argv；参数�
 
 交易操作必须标记 access=write。所有交易写入都需要独立复核和用户确认，不能配置关闭。outcomes.accepted 与 outcomes.rejected 用 JSON Schema 解释业务回执；缺少条件、条件冲突或结果不完整时保持未知。不通过真实下单测试配置。
 
+## 操作确认
+
+已接入且配置为 access=read 的操作无需逐次确认，包括单条、批量行情查询，以及恢复任务后的查询。只读权限沿用工作区配置；不得仅凭工具名称判断只读。查询使用 source_read，不为每次查询重复发现或配置服务。新增来源、连接变更和权限变更仍需确认。
+
+全屏终端使用选择框确认本机操作和交易写入。默认选择拒绝；使用方向键选择，再按 Enter。完整参数在框内显示，长内容可用 PgUp/PgDn 查看。确认框不接受文字筛选或粘贴授权。多个确认依次显示，各自只授权当前参数。
+
+Esc 或 Ctrl+C 关闭确认框并拒绝本次操作，不撤销已发送订单。退出会取消待确认请求。非全屏终端或其他控制对话框占用界面时，保留 /confirm ID VERSION 和 /decline ID VERSION 命令入口；非交互模式不能授权。/revoke 仍撤销当前所有未消费许可。
+
+Ctrl+D 或 /quit 关闭界面后，CLI 等待任务收尾、服务与存储关闭、终端输出完成，再结束进程并返回 Shell。退出保留未完成任务，不等同于 /cancel，也不撤销外部订单。
+
+交易仍需独立复核和精确参数确认；本次不提供整批交易授权或会话级放行。
+
 ## 软件安装
 
 本地软件缺失时先阅读可信说明，再通过 install_package 提出安装器绝对路径和参数。支持 npm install、pip install、uv tool/pip install、python -m pip install，不支持 shell 或 sudo。

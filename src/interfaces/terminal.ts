@@ -253,6 +253,7 @@ export class TerminalAdapter {
     process.on("SIGINT", interrupt);
     try {
       screen.start();
+      this.approval?.attachScreen(screen);
       await this.attach();
       const status = await this.application.status();
       this.showStartup(status);
@@ -261,6 +262,8 @@ export class TerminalAdapter {
     } finally {
       closing = true;
       process.off("SIGINT", interrupt);
+      this.approval?.revoke();
+      this.approval?.attachScreen(undefined);
       screen.stop();
       await this.stopWatch?.();
       await this.application.close();
