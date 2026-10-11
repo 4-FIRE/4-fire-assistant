@@ -4,26 +4,30 @@
 
 FFA is a workspace-scoped Pi extension package, not a standalone CLI.
 
-- `src/index.ts`: Pi commands, tools, resource discovery, and lifecycle.
-- `src/workspace.ts`: activation, initialization, and path rules.
-- `src/sources.ts`: native CLI and MCP operations.
-- `src/storage.ts`, `src/trading.ts`: durable business records and controlled execution.
-- `src/experts.ts`: isolated Pi expert sessions.
-- `src/research.ts`: ordinary Python runs and artifacts.
+- `src/index.ts`: dependency assembly and registration.
+- `src/tools/`: complete tool contracts, execution adapters, and explicit tool lists.
+- `src/services/`: business rules, state changes, and operation order.
+- `src/model/`: data-only business classes; no business behavior or Pi types.
+- `src/integrations/`: Pi sessions, MCP, CLI, and process execution.
+- `src/storage/`: SQLite reliability, ownership, and workspace state files.
+- `src/extension/`: commands, events, activation, and resource lifetime.
+- `src/ui/`: confirmation queue, dialogs, and source display.
+- `src/common/`: shared JSON, validation, file, and package-path helpers.
 - `resources/`: roles, skills, and references.
 - `tests/`: necessary Node tests using real local logic and the Pi SDK.
 - `python/`: optional calculation library and its algorithm tests.
 - `docs/`: architecture, migration status, and decisions.
 - `dist/`: generated test imports. Do not edit generated files.
 
-Read `docs/technical-design.md` and `docs/migration-plan.md` before changing runtime boundaries. Old code and tests are references, not compatibility requirements. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records as part of this cleanup.
+Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/refactoring-design.md` for module boundaries. Read `docs/technical-design.md`, `docs/capability-design.md`, and `docs/migration-plan.md` before changing runtime boundaries. Old code and tests are references, not compatibility requirements. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records as part of this cleanup.
 
 ## Commands
 
 Use Linux and Node.js 22.19 or later. Computation requires Python 3.11+.
 
 - `npm ci --ignore-scripts`: install locked dependencies.
-- `npm run check`: check TypeScript without emitting files.
+- `npm run check`: check TypeScript and dependency boundaries without emitting files.
+- `npm run check:dependencies`: check imports and cycles with dependency-cruiser.
 - `npm run build`: compile test imports into dist.
 - `npm test`: build and run Node tests serially.
 - `npm pack --dry-run`: inspect package contents.
@@ -43,11 +47,15 @@ Pi loads the source extension with jiti. The package does not require compiled J
 - Use the simplest solution that meets an established requirement.
 - Prefer Pi tools, UI, resource discovery, configuration, and sessions over custom equivalents.
 - Define roles in documents and professional methods in skills.
-- Keep business decisions separate from host integration.
+- Keep business decisions separate from host integration. Services receive plain data and narrow capabilities, not complete Pi contexts.
+- Keep tool inputs, outputs, schemas, and execution adapters together. Commands and tools call the same services.
+- Keep state changes in their owning services. Bind tools to one workspace instance and reject stale calls after close.
 - Keep each module focused. Do not add unused interfaces or forwarding layers.
 - Do not create a plugin platform, fixed research workflow, compatibility layer, or second main agent.
 - Keep tools inactive until the workspace enables them.
-- Check trading permissions at the actual send boundary, not only in prompts or tool hooks.
+- Keep every discovered source capability in the catalog, including unresolved, blocked, and unavailable operations.
+- Separate business purpose, state effect, and execution requirements. Do not classify a service by its name.
+- Check change permissions at the actual send boundary, not only in prompts or tool hooks. Trading still requires independent review.
 - Do not claim host isolation for Bash, Python, or extensions.
 - Do not add file hash verification in code, tests, builds, or checks.
 

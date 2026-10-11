@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "../dist/storage.js";
-import { Ledger } from "../dist/trading.js";
-import { classify } from "../dist/sources.js";
+import { DatabaseSync } from "node:sqlite";
+import { Store } from "../dist/storage/store.js";
+import { Ledger } from "../dist/services/execution-ledger.js";
+import { classify } from "../dist/services/source-service.js";
 
 async function fixture(t) {
   const path = await mkdtemp(join(tmpdir(), "ffa-ledger-"));
@@ -13,7 +14,7 @@ async function fixture(t) {
   return { path, store, ledger: new Ledger(store) };
 }
 const scope = { session: "pi-session", request: "request" };
-function prepare(ledger, args = { quantity: 1 }) { return ledger.prepare(scope, "objective", "broker", "submit", args, "binding"); }
+function prepare(ledger, args = { quantity: 1 }) { return ledger.prepare(scope, "objective", "broker", "submit", args, "binding", "independent"); }
 test("one intent cannot be dispatched twice; unresolved attempts block all new work", async t => {
   const { ledger } = await fixture(t);
   const first = prepare(ledger);
@@ -34,12 +35,12 @@ test("one intent cannot be dispatched twice; unresolved attempts block all new w
 test("changed connection bindings replace only unattempted preparation and deduplicate the new intent", async t => {
   const { ledger } = await fixture(t);
   const old = prepare(ledger);
-  const fresh = ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding");
+  const fresh = ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "independent");
   assert.notEqual(fresh.id, old.id);
   assert.equal(ledger.get(old.id).state, "declined");
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding").id, fresh.id);
+  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "independent").id, fresh.id);
   ledger.start(fresh.id);
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "another-binding").id, fresh.id);
+  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "another-binding", "independent").id, fresh.id);
 });
 test("reopen changes incomplete attempts to unknown, independent of chat branches", async t => {
   const { path, store, ledger } = await fixture(t);
@@ -48,7 +49,7 @@ test("reopen changes incomplete attempts to unknown, independent of chat branche
   try {
     const other = new Ledger(reopened); other.recover();
     assert.equal(other.get(intent.id).state, "unknown");
-    assert.throws(() => other.prepare({ session: "fork", request: "another" }, "new", "broker", "submit", { quantity: 1 }, "new-binding"));
+    assert.throws(() => other.prepare({ session: "fork", request: "another" }, "new", "broker", "submit", { quantity: 1 }, "new-binding", "independent"));
     assert.throws(() => other.start(intent.id));
   } finally { reopened.close(); }
 });
@@ -66,6 +67,22 @@ test("ready workspaces must not silently replace a missing ledger", async t => {
   assert.throws(() => new Store(path, false));
   const store = new Store(path); store.close();
 });
+test("unsupported ledger versions are rejected without migrating or deleting records", async t => {
+  const path = await mkdtemp(join(tmpdir(), "ffa-unsupported-ledger-"));
+  t.after(() => rm(path, { recursive: true, force: true }));
+  const file = join(path, "business.sqlite"), db = new DatabaseSync(file);
+  const value = JSON.stringify({ state: "unknown", externalId: "local-reference" });
+  db.exec("CREATE TABLE records (kind TEXT, id TEXT, value TEXT); PRAGMA user_version=1");
+  db.prepare("INSERT INTO records VALUES (?,?,?)").run("intent", "history", value);
+  db.close();
+  assert.throws(() => new Store(path, false));
+  const preserved = new DatabaseSync(file);
+  try {
+    assert.equal(preserved.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(preserved.prepare("SELECT value FROM records WHERE id=?").get("history").value, value);
+  } finally { preserved.close(); }
+});
+
 test("only one complete non-conflicting receipt classification is known", () => {
   const op = { outcomes: { accepted: { type: "object", required: ["accepted"], properties: { accepted: { const: true } } },
     rejected: { type: "object", required: ["rejected"], properties: { rejected: { const: true } } } } };

@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { lstatSync, openSync, closeSync } from "node:fs";
-import { canonical, type Json } from "./values.js";
+import { canonical, type Json } from "../common/json.js";
 
 function privateFile(path: string) {
   try {
@@ -31,8 +31,8 @@ export class Store {
             this.#db.prepare("PRAGMA synchronous").get()?.synchronous !== 2) throw new Error("交易存储需要 WAL/FULL。");
         const version = this.#db.prepare("PRAGMA user_version").get()?.user_version;
         if (version === 0 && create && this.#db.prepare("SELECT name FROM sqlite_master WHERE type=\'table\'").all().length === 0) {
-          this.#db.exec("BEGIN IMMEDIATE; CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(kind,id)); PRAGMA user_version=1; COMMIT");
-        } else if (version !== 1) throw new Error("不支持此业务账本格式；不会重建或升级。");
+          this.#db.exec("BEGIN IMMEDIATE; CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(kind,id)); PRAGMA user_version=2; COMMIT");
+        } else if (version !== 2) throw new Error("不支持此业务账本格式；不会重建或升级。");
         if (this.#db.prepare("PRAGMA quick_check").get()?.quick_check !== "ok") throw new Error("账本完整性检查失败。");
         this.#db.prepare("SELECT kind,id,value FROM records LIMIT 0").all();
       } catch (error) { this.#db.close(); throw error; }
@@ -66,6 +66,7 @@ export class Store {
   }
   close() {
     if (this.#closed) return;
-    this.#db.close(); this.#lock.close(); this.#closed = true;
+    try { this.#db.close(); }
+    finally { try { this.#lock.close(); } finally { this.#closed = true; } }
   }
 }

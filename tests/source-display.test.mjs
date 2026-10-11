@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Text, visibleWidth } from "@earendil-works/pi-tui";
-import { operationSignature, operationSummary } from "../dist/source-display.js";
+import { operationSignature, operationSummary } from "../dist/ui/source-display.js";
 
 test("operation signatures keep required, optional, literal, array and union parameter types", () => {
   const inputSchema = { type: "object", additionalProperties: false, required: ["symbol", "quantity"], properties: {
@@ -26,7 +26,7 @@ test("open and unknown parameter schemas do not imply a closed empty signature",
 test("long multiline service documentation stays out of the compact summary and remains unchanged", () => {
   for (const separator of ["\n", "\r\n", "\\n", "\\r\\n"]) {
     const description = `短说明。${separator}${separator}${"// field: number".repeat(200)}`;
-    const operation = { name: "query", access: "read", description,
+    const operation = { name: "query", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, description,
       inputSchema: { type: "object", required: ["code"], additionalProperties: false, properties: { code: { type: "string" } } } };
     const before = structuredClone(operation);
     const summary = operationSummary(operation);
@@ -36,7 +36,7 @@ test("long multiline service documentation stays out of the compact summary and 
     assert.ok(!summary.includes("\\n"));
     assert.deepEqual(operation, before);
   }
-  const operation = { name: "query", access: "read", description: "说明🙂".repeat(200), inputSchema: { type: "object", additionalProperties: false } };
+  const operation = { name: "query", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, description: "说明🙂".repeat(200), inputSchema: { type: "object", additionalProperties: false } };
   const summary = operationSummary(operation);
   assert.equal(summary.split("\n").length, 2);
   assert.ok(visibleWidth(summary.split("\n")[1]) <= 82);

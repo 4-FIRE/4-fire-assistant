@@ -1,6 +1,6 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import type { Operation, Source } from "./sources.js";
-import { object } from "./values.js";
+import type { Operation, Source } from "../model/source.js";
+import { object } from "../common/json.js";
 
 // Descriptions and names can come from a service. Do not interpret terminal controls.
 function plain(value: string): string {
@@ -34,14 +34,18 @@ export function operationSummary(operation: Operation): string {
   // The complete service documentation remains in the structured result and raw view.
   const firstLine = operation.description.split(/\r\n|[\r\n]|\\r\\n|\\[rn]/).find(line => line.trim()) ?? "";
   const description = truncateToWidth(plain(firstLine.trim().replace(/\s+/gu, " ")), 80);
-  return `[${operation.access === "write" ? "写入" : "只读"}] ${operationSignature(operation)}\n  ${description}`;
+  const state = operation.available === false ? "不可用" : operation.blocked ? "禁止" : operation.effect === "observe" ? "观察" : operation.effect === "change" ? "变更" : "待确认";
+  const requirement = operation.effect === "change" ? ` · ${operation.analysis?.execution === "independent" ? "独立复核" : "用户确认"}` : "";
+  return `[${state}${requirement}] ${operationSignature(operation)}\n  ${description}`;
 }
 export function sourceSummary(source: Source): string {
   const connection = source.url ? `连接：${plain(source.url)}` : `命令：${JSON.stringify(source.command)}\n启动参数：${JSON.stringify(source.args ?? [])}`;
   const references = Object.entries({ env: source.env, headers: source.headers })
     .filter(([, value]) => value !== undefined).map(([key, value]) => `${key} 引用：${JSON.stringify(value)}`);
   return [`来源：${plain(source.id)} · ${source.kind.toUpperCase()}`, connection, ...references,
-    `操作：只读 ${source.operations.filter(op => op.access === "read").length}，写入 ${source.operations.filter(op => op.access === "write").length}`,
+    `目录：共 ${source.operations.length} 项；观察 ${source.operations.filter(op => op.effect === "observe").length}，变更 ${source.operations.filter(op => op.effect === "change").length}，待确认 ${source.operations.filter(op => op.effect === "unresolved").length}`,
+    ...(source.discovery ? [`发现：${plain(source.discovery.status)} · ${plain(source.discovery.scope)}`] : source.kind === "mcp" ? ["尚未发现目录；本次仅确认连接，不开放业务调用。"] : []),
+    ...(source.coverage ? [`资料依据：${plain(source.coverage.basis)}\n覆盖缺口：${source.coverage.limitations.map(plain).join("；")}`] : []),
     "签名仅作摘要；参数限制、CLI 绑定和回执规则见完整配置。", "",
     source.operations.map(operationSummary).join("\n\n")].join("\n");
 }

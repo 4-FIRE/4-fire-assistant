@@ -1,10 +1,12 @@
 import { mkdir, lstat, realpath, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { runCommand } from "./sources.js";
-import { atomicFile } from "./workspace.js";
-import { requireThat, type Json } from "./values.js";
+import { runCommand } from "../integrations/process.js";
+import { atomicFile } from "../common/files.js";
+import { requireThat } from "../common/validation.js";
+import type { Json } from "../common/json.js";
+import type { Store } from "../storage/store.js";
+import { resourceRoot } from "../common/paths.js";
 
 export function ownerParts(owner?: string) {
   if (!owner) return ["scratch"];
@@ -28,7 +30,7 @@ export async function runPython(root: string, python: string, input: { code: str
   const manifest: Record<string, unknown> = { id, state: "running", startedAt: new Date().toISOString(), python, isolation: "none" };
   const persist = () => atomicFile(join(directory, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
   await persist();
-  const library = fileURLToPath(new URL("../python/src/", import.meta.url));
+  const library = join(resourceRoot, "../python/src/");
   const bootstrap = `import os,sys,runpy,ctypes,signal\nctypes.CDLL(None).prctl(1,signal.SIGKILL)\nif os.getppid()!=${process.pid}: sys.exit(1)\nsys.path.insert(0,${JSON.stringify(library)})\nsys.path.insert(0,os.getcwd())\nrunpy.run_path('main.py',run_name='__main__')`;
   try {
     const observation = await runCommand(python, ["-I", "-B", "-u", "-c", bootstrap], undefined, directory, {}, signal);
@@ -38,4 +40,16 @@ export async function runPython(root: string, python: string, input: { code: str
     return { id, path: relative(base, directory), state: manifest.state, output: observation.data };
   } catch (error) { manifest.state = signal?.aborted ? "cancelled" : "failed"; throw error; }
   finally { manifest.finishedAt = new Date().toISOString(); await persist(); }
+}
+
+export class ResearchService {
+  constructor(private readonly root: string, private readonly store: Store) {}
+  run(input: { code: string; inputs: Json; owner?: string }, signal?: AbortSignal) {
+    return runPython(this.root, this.store.get<string>("setting", "python") ?? "/usr/bin/python3", input, signal);
+  }
+  async configure(python: string, confirm: (value: unknown) => Promise<boolean>, signal?: AbortSignal) {
+    requireThat(python.startsWith("/"), "需要 Python 可执行文件的绝对路径。");
+    requireThat(await confirm({ path: python }), "用户未确认。");
+    signal?.throwIfAborted(); this.store.put("setting", "python", await realpath(python));
+  }
 }

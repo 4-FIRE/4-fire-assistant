@@ -4,41 +4,11 @@ import { mkdtemp, rm, mkdir, readdir, writeFile, readFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { watch } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { join, resolve } from "node:path";
-import { createAgentSession, createCodemodeExtension, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { begin, finish } from "../dist/workspace.js";
-import { Store } from "../dist/storage.js";
-import { expertLoader } from "../dist/experts.js";
-import { parseSource } from "../dist/sources.js";
-import { schema } from "../dist/values.js";
+import { join } from "node:path";
+import { host } from "./helpers/pi-host.mjs";
+import { expertLoader } from "../dist/integrations/expert-resources.js";
+import { schema } from "../dist/common/validation.js";
 
-async function host(t, status, sources = []) {
-  const temp = await mkdtemp(join(tmpdir(), "ffa-pi-")), root = join(temp, "workspace"), agentDir = join(temp, "agent");
-  await mkdir(root); await mkdir(agentDir);
-  if (status) {
-    await begin(root);
-    const store = new Store(join(root, ".ffa"));
-    for (const source of sources) store.put("source", source.id, parseSource(source));
-    store.close();
-    if (status === "ready") await finish(root, "test-market");
-  }
-  const settingsManager = SettingsManager.inMemory({ packages: [resolve(".")], defaultTools: ["+codemode"] });
-  const loader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noContextFiles: true,
-    extensionFactories: [createCodemodeExtension({ models: false })] });
-  await loader.reload();
-  assert.equal(loader.getExtensions().errors.length, 0);
-  const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
-  const { session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader: loader,
-    modelRuntime: runtime, sessionManager: SessionManager.inMemory(root) });
-  const errors = [];
-  await session.bindExtensions({ mode: "json", onError: error => errors.push(error) });
-  t.after(async () => {
-    await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" }); session.dispose();
-    await rm(temp, { recursive: true, force: true });
-  });
-  assert.deepEqual(errors, []);
-  return { root, loader, session, errors };
-}
 for (const status of [undefined, "pending"]) {
   test("real Pi package stays inactive in " + (status ?? "new") + " workspaces", async t => {
     const { root, loader, session, errors } = await host(t, status);
@@ -60,13 +30,13 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   assert.ok(storeFiles.includes("business.sqlite"));
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_source");
   assert.ok(configure);
-  await assert.rejects(configure.execute("test", { source: { id: "local", kind: "cli", command: "/usr/bin/printf",
-    operations: [{ name: "read", description: "Print", access: "read", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] } }, undefined));
+  await assert.rejects(configure.execute("test", { source: { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf",
+    operations: [{ name: "read", description: "Print", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] } }, undefined));
 });
 test("real Pi tools save CLI evidence and cannot execute unreviewed operations", async t => {
-  const source = { id: "local", kind: "cli", command: "/usr/bin/printf", operations: [
-    { name: "echo", description: "Return explicit JSON", access: "read", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
-    { name: "write", description: "Requires approval", access: "write", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
+  const source = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+    { name: "echo", description: "Return explicit JSON", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
+    { name: "write", description: "Requires approval", effect: "change", assessment: "understood", analysis: { purpose: "Check controlled execution", basis: "Local CLI contract", consequences: "Requires review", related: [], impacts: ["orders"], execution: "independent" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }],
       outcomes: { accepted: { const: true }, rejected: { const: false } } }
   ] };
   const { session } = await host(t, "ready", [source]);
@@ -77,9 +47,9 @@ test("real Pi tools save CLI evidence and cannot execute unreviewed operations",
   const saved = await tool("ffa_record").execute("record", { kind: "receipt", id: read.details.id }, undefined);
   assert.deepEqual(JSON.parse(saved.details.text).parameters, { sample: 42 });
   await assert.rejects(tool("ffa_source_read").execute("bad", { source: "local", operation: "write", parameters: {} }, undefined));
-  const prepared = await tool("ffa_prepare_trade").execute("prepare", { objective: "check approval", source: "local", operation: "write", parameters: {} }, undefined);
+  const prepared = await tool("ffa_prepare_change").execute("prepare", { objective: "check approval", source: "local", operation: "write", parameters: {} }, undefined);
   assert.equal(prepared.details.state, "prepared");
-  await assert.rejects(tool("ffa_execute_trade").execute("execute", { intentId: prepared.details.id }, undefined));
+  await assert.rejects(tool("ffa_execute_change").execute("execute", { intentId: prepared.details.id }, undefined));
   const still = await tool("ffa_record").execute("record", { kind: "intent", id: prepared.details.id }, undefined);
   assert.equal(JSON.parse(still.details.text).attempt, undefined);
   const blocked = await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "raw", toolName: "mcp__alias__write", input: {} });
@@ -95,9 +65,9 @@ test("expert resource loader excludes project extensions and exposes only role r
   assert.ok(loader.getSkills().skills.length >= 6);
 });
 
-const localSource = { id: "local", kind: "cli", command: "/usr/bin/printf", operations: [
-  { name: "echo", description: "Return JSON", access: "read", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
-  { name: "write", description: "Requires approval", access: "write", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
+const localSource = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+  { name: "echo", description: "Return JSON", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
+  { name: "write", description: "Requires approval", effect: "change", assessment: "understood", analysis: { purpose: "Check controlled execution", basis: "Local CLI contract", consequences: "Requires review", related: [], impacts: ["orders"], execution: "independent" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }],
     outcomes: { accepted: { const: true }, rejected: { const: false } } }
 ] };
 async function runScript(session, id, code, signal) {
@@ -134,7 +104,7 @@ test("real codemode discovers all active FFA tools and receives structured resul
   `);
   const data = scriptValue(result);
   assert.deepEqual(data.names, session.getCallableToolNames().filter(name => name.startsWith("ffa_")).sort());
-  for (const name of ["ffa_configure_source", "ffa_delegate", "ffa_execute_trade"]) assert.ok(data.names.includes(name));
+  for (const name of ["ffa_configure_source", "ffa_delegate", "ffa_execute_change"]) assert.ok(data.names.includes(name));
   assert.equal(data.namespace, "ffa"); assert.equal(data.described, true);
   assert.equal(data.catalogType, "object"); assert.equal(data.source, "local");
   assert.deepEqual(data.data, { sample: 42 }); assert.deepEqual(data.saved, { sample: 42 });
@@ -142,12 +112,30 @@ test("real codemode discovers all active FFA tools and receives structured resul
   assert.ok(result.details.calls.every(call => call.status === "ok"));
 });
 
+test("ordinary changes still require the real Pi confirmation channel through codemode", async t => {
+  const source = structuredClone(localSource);
+  source.operations[1].analysis.impacts = [];
+  source.operations[1].analysis.execution = "confirmation";
+  const { session } = await host(t, "ready", [source]);
+  const result = await runScript(session, "ordinary-gate", `
+    const prepared = await tools.ffa_prepare_change({ objective: "check confirmation", source: "local", operation: "write", parameters: {} });
+    const outcome = await Promise.allSettled([tools.ffa_execute_change({ intentId: prepared.id })]);
+    const record = await tools.ffa_record({ kind: "intent", id: prepared.id });
+    return { requirement: prepared.execution, status: outcome[0].status, intent: JSON.parse(record.text) };
+  `);
+  const data = scriptValue(result);
+  assert.equal(data.requirement, "confirmation");
+  assert.equal(data.status, "rejected");
+  assert.equal(data.intent.state, "prepared");
+  assert.equal(data.intent.attempt, undefined);
+});
+
 test("codemode cannot bypass confirmation or review and retains structured failure data", async t => {
   const { session, root } = await host(t, "ready", [localSource]);
   const result = await runScript(session, "gates", `
-    const prepared = await tools.ffa_prepare_trade({ objective: "check review", source: "local", operation: "write", parameters: {} });
+    const prepared = await tools.ffa_prepare_change({ objective: "check review", source: "local", operation: "write", parameters: {} });
     const calls = await Promise.allSettled([
-      tools.ffa_execute_trade({ intentId: prepared.id }),
+      tools.ffa_execute_change({ intentId: prepared.id }),
       tools.ffa_configure_source({ source: ${JSON.stringify({ ...localSource, id: "other" })} })
     ]);
     const failed = await tools.ffa_python({ code: "raise ValueError('local test')" });
@@ -180,7 +168,7 @@ test("FFA successful and failed outputs match their declared schemas", async t =
   assert.equal(single.structuredContent.sources[0].operations.length, 1);
   const receipt = await execute("ffa_source_read", { source: "local", operation: "echo", parameters: { value: 1 } });
   await execute("ffa_record", { kind: "receipt", id: receipt.structuredContent.id });
-  await execute("ffa_prepare_trade", { objective: "schema", source: "local", operation: "write", parameters: {} });
+  await execute("ffa_prepare_change", { objective: "schema", source: "local", operation: "write", parameters: {} });
   await execute("ffa_python", { code: "print('42')" });
   const failed = await execute("ffa_python", { code: "raise ValueError('local test')" });
   assert.equal(failed.isError, true);

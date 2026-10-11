@@ -4,10 +4,10 @@
 
 先读取已有资料，保留用户文件。只补齐当前缺项，不固定执行所有步骤。此阶段只进行接入、资料准备和真实数据验证，不进行正常研究或交易。
 
-阅读本包 resources/references/connections.md（相对于扩展包根目录）以及实际服务文档。用 ffa_configure_source 提出连接与操作约定，由用户确认。凭据只使用环境变量引用，不读取或输出凭据值。CLI 与 MCP 均可；交易服务可选，不能用真实下单测试连接。
+阅读本包 resources/references/connections.md（相对于扩展包根目录）以及实际服务文档。用 ffa_configure_source 提出连接，由用户确认。MCP 随后用 ffa_discover_source 发现全部工具；CLI 依据完整帮助和文档整理目录并说明覆盖缺口。逐项分析用途、状态影响、执行要求和跨接口关系，再提交完整调用约定。不能按当前任务或模块名称挑选接口。尚未分析的保留 unassessed；资料不足的填写依据并标记 uncertain，不静默省略。凭据只使用环境变量引用，不读取或输出凭据值。CLI 与 MCP 均可；交易服务可选，不能用真实下单测试连接。
 
 用 ffa_sources 查看约定，再用 ffa_source_read 查询目标市场真实行情和历史 K 线。保存两次成功回执，解释数据含义、时区、单位、复权、分页及限制。每个来源维护 sources/<id>/GUIDE.md，使用 sources/AGENTS.md 导航。不要建立统一行情字段。
 
 初始化完成前不要向根 AGENTS.md 或 .agents/skills 注入投资角色或初始化流程，不写项目 MCP 自动加载配置。必要的普通资料可以准备。完成工具会在根 AGENTS.md 缺失时创建中性的资料导航，不覆盖已有正文。
 
-完成后调用 ffa_finish_initialization，提交市场和两个实际回执 ID，工具核实资料及当前连接并请求用户确认。提示用户执行 Pi 原生 /reload 刷新技能、角色和业务工具。退出或重载会暂停未完成初始化；再次 /ffa init 才接续。
+所有可见能力均已分析，且待确认项的缺口已说明后，调用 ffa_finish_initialization，提交市场和两个实际回执 ID，工具核实资料及当前连接并请求用户确认。提示用户执行 Pi 原生 /reload 刷新技能、角色和业务工具。退出或重载会暂停未完成初始化；再次 /ffa init 才接续。

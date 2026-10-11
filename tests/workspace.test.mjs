@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { begin, state, prepareDirectories, documentsReady, finish, mutationTarget } from "../dist/workspace.js";
+import { begin, state } from "../dist/storage/workspace-state.js";
+import { prepareDirectories, documentsReady, finish } from "../dist/services/initialization-service.js";
+import { mutationTarget } from "../dist/common/files.js";
 
 async function directory(t) {
   const root = await mkdtemp(join(tmpdir(), "ffa-workspace-"));
@@ -35,6 +37,16 @@ test("old and damaged state is rejected without being replaced", async t => {
   await assert.rejects(begin(root));
   assert.deepEqual(await readdir(join(root, ".ffa")), ["config.json"]);
 });
+test("unsupported Pi workspace format is rejected without rewriting state", async t => {
+  const root = await directory(t);
+  await mkdir(join(root, ".ffa"));
+  const path = join(root, ".ffa/workspace.json"), value = JSON.stringify({ format: "ffa-pi/1", status: "ready", market: "local" });
+  await writeFile(path, value);
+  await assert.rejects(state(root));
+  await assert.rejects(begin(root));
+  assert.equal(await readFile(path, "utf8"), value);
+});
+
 test("initialization rejects directory aliases and paths outside the workspace", async t => {
   const root = await directory(t), outside = await directory(t);
   await symlink(outside, join(root, ".ffa"));

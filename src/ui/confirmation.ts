@@ -1,7 +1,7 @@
 import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { ScrollView, SelectList, Text, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { requireThat } from "./values.js";
+import { requireThat } from "../common/validation.js";
 
 /** One confirmation owns its viewport, selection, and abort listener. */
 export class ConfirmationDialog implements Component {
@@ -112,4 +112,13 @@ export async function ask(ctx: ExtensionContext, title: string, value: unknown, 
     : await ctx.ui.confirm(title, summary === undefined ? text : `${summary}\n\n完整配置：\n${text}`, signal ? { signal } : {});
   signal?.throwIfAborted();
   return allowed === true;
+}
+
+export class Confirmations {
+  #queue: Promise<unknown> = Promise.resolve();
+  ask(ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal, summary?: string): Promise<boolean> {
+    const pending = this.#queue.then(() => ask(ctx, title, value, signal, summary));
+    this.#queue = pending.catch(() => undefined);
+    return pending;
+  }
 }
