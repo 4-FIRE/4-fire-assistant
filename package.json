@@ -1,55 +1,54 @@
 {
   "name": "4-fire-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Model-led trading assistant with durable tasks and controlled execution",
+  "description": "Workspace-scoped investment tools and skills for Pi",
   "type": "module",
-  "bin": {
-    "ffa": "dist/main.js"
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [],
+    "prompts": [],
+    "themes": []
   },
   "files": [
-    "dist",
+    "src",
     "resources",
+    "python/src/ffa_compute/*.py",
+    "python/requirements.lock",
+    "python/README.md",
     "README.md",
     "CONTEXT.md",
-    "docs",
-    "npm-shrinkwrap.json",
-    "extensions",
-    "python/src",
-    "python/requirements.lock",
-    "python/README.md"
+    "docs"
   ],
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc --noEmit",
+    "build": "node scripts/clean-dist.mjs && tsc",
     "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
-    "start": "node dist/main.js",
-    "prepack": "npm run build"
+    "prepack": "npm run check"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.1.0",
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-codemode": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@earendil-works/pi-durable": "1.1.0",
     "@earendil-works/pi-mcp": "1.1.0",
-    "@earendil-works/pi-tui": "1.1.0",
     "ajv": "8.17.1",
     "ajv-formats": "3.0.1"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "typebox": "1.3.27",
     "@types/node": "24.10.1",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "@earendil-works/chord": "1.1.0",
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-agent-core": "1.1.0",
-    "@earendil-works/pi-mcp": "1.1.0",
-    "@earendil-works/pi-tui": "1.1.0",
-    "@earendil-works/pi-codemode": "1.1.0"
   }
 }

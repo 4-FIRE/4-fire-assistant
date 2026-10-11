@@ -1,66 +1,74 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Structure
 
-This repository implements a standalone terminal trading assistant with persistent sessions and controlled trade execution.
+FFA is a workspace-scoped Pi extension package, not a standalone CLI.
 
-- `src/domain/`: execution, workspace, and shared domain types.
-- `src/application/`: orchestration, experts, reports, and service ports.
-- `src/infrastructure/`: storage, configuration, models, and MCP integrations.
-- `src/interfaces/`: terminal interaction, authentication, and approval; `src/main.ts` is the entry point.
-- `tests/`: JavaScript test suites, fixtures, and subprocess helpers.
-- `resources/`: packaged prompts, protocols, and formula references.
-- `docs/`: current architecture and configuration.
-- `dist/`: generated JavaScript and declarations. Do not edit generated files.
+- `src/index.ts`: Pi commands, tools, resource discovery, and lifecycle.
+- `src/workspace.ts`: activation, initialization, and path rules.
+- `src/sources.ts`: native CLI and MCP operations.
+- `src/storage.ts`, `src/trading.ts`: durable business records and controlled execution.
+- `src/experts.ts`: isolated Pi expert sessions.
+- `src/research.ts`: ordinary Python runs and artifacts.
+- `resources/`: roles, skills, and references.
+- `tests/`: necessary Node tests using real local logic and the Pi SDK.
+- `python/`: optional calculation library and its algorithm tests.
+- `docs/`: architecture, migration status, and decisions.
+- `dist/`: generated test imports. Do not edit generated files.
 
-## Build, Test, and Development Commands
+Read `docs/technical-design.md` and `docs/migration-plan.md` before changing runtime boundaries. Old code and tests are references, not compatibility requirements. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records as part of this cleanup.
 
-Use Linux and Node.js 22.19 or later. Computation uses a shared Python 3.11+ environment.
+## Commands
 
-- `npm ci --ignore-scripts`: install dependencies from `npm-shrinkwrap.json`.
+Use Linux and Node.js 22.19 or later. Computation requires Python 3.11+.
+
+- `npm ci --ignore-scripts`: install locked dependencies.
 - `npm run check`: check TypeScript without emitting files.
-- `npm run build`: compile `src/` into `dist/`.
-- `npm test`: build and run all tests serially.
-- `npm start`: run the assistant in the current workspace after building.
-- `npm pack`: build and create the distribution archive.
+- `npm run build`: compile test imports into dist.
+- `npm test`: build and run Node tests serially.
+- `npm pack --dry-run`: inspect package contents.
+
+Pi loads the source extension with jiti. The package does not require compiled JavaScript at runtime. Declare host-provided packages as peers, not runtime dependencies.
 
 ## FFA
 
-本节供 FFA 以外的 agent 使用。
-从工作区根目录运行 `ffa`。
-使用 `ffa --help` 查看 CLI 用法。
-运行 `ffa` 后，输入 `/help` 查看交互命令。
+从投资工作区根目录使用 `pi`。本地包安装方式见 README。
+
+未初始化时只提示 `/ffa init`，不接管普通 Pi 工作。初始化中断不自动继续；完成后通过原生 `/reload` 刷新能力，以后启动自动启用，但不自动开展业务。
+
+接受 Pi 原生恢复，不引入 pi-durable 或另建通用任务运行时。交易账本独立于聊天分支，可能已发送的交易不得自动重发。
 
 ## Development Principles
 
-Apply these principles to every design and code change:
+- Use the simplest solution that meets an established requirement.
+- Prefer Pi tools, UI, resource discovery, configuration, and sessions over custom equivalents.
+- Define roles in documents and professional methods in skills.
+- Keep business decisions separate from host integration.
+- Keep each module focused. Do not add unused interfaces or forwarding layers.
+- Do not create a plugin platform, fixed research workflow, compatibility layer, or second main agent.
+- Keep tools inactive until the workspace enables them.
+- Check trading permissions at the actual send boundary, not only in prompts or tool hooks.
+- Do not claim host isolation for Bash, Python, or extensions.
+- Do not add file hash verification in code, tests, builds, or checks.
 
-- Use the simplest solution that meets the current requirements. Do not assume requirements that have not been established.
-- Add modules, abstractions, dependencies, or configuration only when the current task requires them. Reuse existing structures when they fit.
-- Keep each module focused on one responsibility. Keep related logic together and minimize coupling between modules.
-- Keep dependencies one-way across architectural layers. Do not introduce circular dependencies. Keep domain logic independent of infrastructure and interfaces.
-- Support extension and replacement through clear boundaries where current requirements need them. Keep service-specific details inside their integrations.
-- Do not build speculative extension points or general frameworks. Extensibility and pluggability must serve concrete needs without unnecessary complexity.
-- Do not add file hash verification in application code, tests, build scripts, or development checks.
+## Style
 
-## Coding Style & Naming Conventions
+Use TypeScript ESM, two-space indentation, double quotes, semicolons, and `.js` suffixes in relative imports. Use `import type` for type-only imports. Keep strict compiler checks.
 
-Follow existing TypeScript ESM conventions: two-space indentation, double quotes, semicolons, and `.js` suffixes in relative imports. Use `import type` for type-only imports. Keep strict compiler checks enabled.
+Use camelCase for variables and functions, PascalCase for types, and kebab-case for multiword filenames. Keep service details in their integration.
 
-Use camelCase for functions and variables, PascalCase for types and classes, and kebab-case for multiword filenames. Keep service-specific contracts in infrastructure integrations. No formatter or linter is configured; use `npm run check` and match nearby code.
+## Tests
 
-## Testing Guidelines
+Use `node:test` and `node:assert/strict`. Import compiled modules from dist. Test concrete correctness risks, not coverage counts or implementation structure.
 
-Use `node:test` and `node:assert/strict`. Name suites `tests/*.test.mjs`; import compiled modules from `dist/`. After building, run individual suites with `node --test tests/config.test.mjs`.
+Do not use mocks, stubs, fake models, simulated services, real trades, or personal credentials. Use actual local files, SQLite, processes, calculations, and Pi SDK behavior.
 
-Write only necessary unit tests for code logic. Each test must address a concrete correctness risk or prevent a known logic regression. Do not add tests merely to increase coverage or mirror the implementation.
+Do not test documentation, prompt text, labels, or message wording. Parsing and serialization may verify structured values when they form the logic contract.
 
-Do not write mock-based tests or use stubs, fake models, or simulated services. Test real logic with explicit inputs and observable results. Never use real trades or personal credentials for tests.
+Real model and external service acceptance requires an approved environment. Record remaining gaps; local tests do not prove those behaviors.
 
-Do not write tests that verify text content, such as documentation, prompts, labels, or message wording. Test decisions, calculations, state changes, and error handling when needed. Parsing and serialization tests may verify structured values when these are part of the logic contract.
+## Submission
 
-## Commit & Pull Request Guidelines
+Use concise `feat:` or `fix:` commit prefixes. Keep changes focused.
 
-Follow existing commit prefixes such as `feat:` and `fix:` with concise, imperative descriptions. Keep commits focused.
-
-Describe the problem, resulting behavior, and validation in each pull request. Link relevant issues when available. Update configuration or design documentation when behavior changes. Run `npm run check`, `npm test`, and `git diff --check` before submission. Keep credentials, runtime databases, and local configuration out of commits.
+Update design and usage docs when behavior changes. Run `npm run check`, `npm test`, and `git diff --check` before submission. Keep credentials, runtime databases, and local configuration out of commits.
