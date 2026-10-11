@@ -109,7 +109,7 @@ Python、Bash 和扩展具有宿主权限，不是沙箱。不要通过其他 MC
 
 类型检查、依赖检查与测试覆盖真实 Pi package 加载、无干扰状态、CLI 查询、Python 计算、服务校验、旧调用失效和交易存储约束。没有使用假模型、模拟服务、个人凭据或真实交易。
 
-工具 API 定义放在 `src/tools/`，业务规则放在 `src/services/`。`npm run check` 使用 dependency-cruiser 检查依赖方向和循环。开发原则见[架构要求](docs/architecture-guidelines.md)，具体责任见[重构设计](docs/refactoring-design.md)，本次行为调整见[能力接入设计](docs/capability-design.md)。
+工具 API 定义放在 `src/tools/`，业务规则放在 `src/services/`。`npm run check` 使用 dependency-cruiser 检查依赖方向和循环。开发原则见[架构要求](docs/architecture-guidelines.md)，模块责任与验收边界见[技术设计](docs/technical-design.md)，来源与执行规则见[能力接入设计](docs/capability-design.md)。
 
 **真实模型协作、实际行情服务初始化、MCP 服务与交互确认仍需获准环境验收。** 本地测试通过不等于可以直接投入实盘。
 
@@ -119,4 +119,4 @@ npm test
 git diff --check
 ```
 
-[技术设计](docs/technical-design.md) · [迁移与验收记录](docs/migration-plan.md) · [ADR](docs/adr/0001-use-pi-extension.md) · [领域术语](CONTEXT.md) · [计算库许可](python/README.md)
+[技术设计](docs/technical-design.md) · [领域术语](CONTEXT.md) · [计算库许可](python/README.md)

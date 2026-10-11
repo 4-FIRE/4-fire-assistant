@@ -16,10 +16,10 @@ FFA is a workspace-scoped Pi extension package, not a standalone CLI.
 - `resources/`: roles, skills, and references.
 - `tests/`: necessary Node tests using real local logic and the Pi SDK.
 - `python/`: optional calculation library and its algorithm tests.
-- `docs/`: architecture, migration status, and decisions.
+- `docs/`: current architecture and validation limits.
 - `dist/`: generated test imports. Do not edit generated files.
 
-Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/refactoring-design.md` for module boundaries. Read `docs/technical-design.md`, `docs/capability-design.md`, and `docs/migration-plan.md` before changing runtime boundaries. Old code and tests are references, not compatibility requirements. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records as part of this cleanup.
+Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/technical-design.md` for module boundaries and validation limits. Read `docs/capability-design.md` before changing source discovery or execution permissions. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records.
 
 ## Commands
 
