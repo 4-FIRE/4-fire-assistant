@@ -11,13 +11,21 @@ import { emptyWorkspace } from "../dist/domain/workspace.js";
 import { saveWorkspace } from "../dist/infrastructure/workspace.js";
 import { ResourceSnapshot, seedWorkspaceDocuments } from "../dist/infrastructure/resources.js";
 import { WorkspaceServices } from "../dist/infrastructure/workspace-services.js";
-import { DurableRuntime } from "../dist/infrastructure/durable-runtime.js";
+import { DurableRuntime, WorkspaceDoc } from "../dist/infrastructure/durable-runtime.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { TerminalApproval } from "../dist/interfaces/approval.js";
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
 import { WorkDoc, TeamDoc } from "../dist/infrastructure/runtime-documents.js";
 import { BusinessIntegration } from "../dist/infrastructure/assistant-integration.js";
+async function internalId(harness, uuid) {
+  const workspace = await harness.snapshot(WorkspaceDoc, context);
+  const session = workspace.sessions.find(item => item.uuid === uuid);
+  assert.ok(session);
+  return session.id;
+}
+
 test("assembled tools retain role permissions and write replay policy", async () => {
   const integration = await BusinessIntegration.create({}, { provider: "openai", modelId: "gpt-4.1" });
   const tools = integration.extension.tools;
@@ -59,7 +67,7 @@ test("recovery associates expert submissions with their owner and request; cance
   let submissionId;
   try {
     const childId = await harness.commit(async tx => {
-      const ownerId = Number(owner.id);
+      const ownerId = (await tx.doc(WorkspaceDoc)).sessions.find(item => item.uuid === owner.id).id;
       const anchor = await tx.createTask(integration.extension.tasks[0], null,
         { conversationId: ownerId, ownership: { kind: "conversation" }, background: true });
       const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
@@ -76,9 +84,13 @@ test("recovery associates expert submissions with their owner and request; cance
     assert.equal(await harness.abortSubmission(submissionId, context), "already_placed");
   } finally { await harness.close(context); await storage.close(); }
 
-  runtime = await DurableRuntime.open(options);
+  runtime = await DurableRuntime.open({ ...options, session: "new" });
   assert.deepEqual((await runtime.status()).blocked, []);
-  await runtime.newSession();
+  assert.equal((await runtime.status()).work, null);
+  assert.equal((await runtime.status()).otherPendingSessions[0].conversation.id, owner.id);
+  assert.equal((await runtime.status()).otherPendingSessions[0].work.requestId, "owner-request");
+  await assert.rejects(runtime.submit("new objective"), { code: "OTHER_SESSION_PENDING" });
+  await assert.rejects(runtime.cancel(), { code: "OTHER_SESSION_PENDING" });
   await runtime.selectSession(owner.id);
   const pending = await runtime.status();
   assert.equal(pending.needsContinuation, true);
@@ -89,7 +101,8 @@ test("recovery associates expert submissions with their owner and request; cance
   const reopenedStorage = await openApplicationStorage(directory);
   const reopened = await Harness.open(reopenedStorage.storage, { models, registry }, context);
   try {
-    await reopened.commit(async tx => { (await tx.doc(WorkDoc, Number(owner.id))).request.status = "cancelled"; }, context);
+    const ownerId = await internalId(reopened, owner.id);
+    await reopened.commit(async tx => { (await tx.doc(WorkDoc, ownerId)).request.status = "cancelled"; }, context);
   } finally { await reopened.close(context); await reopenedStorage.close(); }
   runtime = await DurableRuntime.open(options);
   assert.deepEqual((await runtime.status()).blocked, ["work_association_missing"]);
@@ -119,7 +132,8 @@ test("session selection preserves pending model bindings and leaves the active s
   const harness = await Harness.open(storage.storage, { models, registry: createRegistry() }, context);
   const request = { requestId: "pending-model", status: "admitting", content: "unfinished work", submissionId: null };
   try {
-    await harness.commit(async tx => { (await tx.doc(WorkDoc, Number(pending.id))).request = request; }, context);
+    const pendingId = await internalId(harness, pending.id);
+    await harness.commit(async tx => { (await tx.doc(WorkDoc, pendingId)).request = request; }, context);
   } finally { await harness.close(context); await storage.close(); }
 
   runtime = await DurableRuntime.open({ ...options, model: changed });
@@ -133,9 +147,10 @@ test("session selection preserves pending model bindings and leaves the active s
   const inspectionStorage = await openApplicationStorage(directory);
   const inspection = await Harness.open(inspectionStorage.storage, { models, registry: createRegistry() }, context);
   try {
-    assert.deepEqual((await (await inspection.conversation(Number(pending.id), context)).agent(context)).model, model);
-    assert.deepEqual((await inspection.snapshot(WorkDoc, Number(pending.id), context)).request, request);
-    assert.deepEqual((await (await inspection.conversation(Number(idle.id), context)).agent(context)).model, changed);
+    const pendingId = await internalId(inspection, pending.id), idleId = await internalId(inspection, idle.id);
+    assert.deepEqual((await (await inspection.conversation(pendingId, context)).agent(context)).model, model);
+    assert.deepEqual((await inspection.snapshot(WorkDoc, pendingId, context)).request, request);
+    assert.deepEqual((await (await inspection.conversation(idleId, context)).agent(context)).model, changed);
     assert.equal((await inspection.inspect(context)).scheduling, "paused");
   } finally { await inspection.close(context); await inspectionStorage.close(); }
 
@@ -146,6 +161,52 @@ test("session selection preserves pending model bindings and leaves the active s
   await assert.rejects(DurableRuntime.open({ ...options, model: changed }), { code: "PENDING_MODEL_CHANGE" });
   runtime = await DurableRuntime.open(options);
   assert.equal((await runtime.status()).work.requestId, request.requestId);
+});
+
+test("session UUIDs and timestamps persist; only work changes update the timestamp", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "ffa-session-metadata-"));
+  const models = createModels(); models.setProvider(openaiProvider());
+  const options = { directory, models, model: { provider: "openai", modelId: "gpt-4.1" } };
+  let runtime = await DurableRuntime.open(options);
+  t.after(async () => { await runtime.close(); await rm(directory, { recursive: true, force: true }); });
+  const first = (await runtime.status()).conversation;
+  await delay(5);
+  const second = await runtime.newSession("研究");
+  const before = await runtime.sessions();
+  assert.equal(new Set(before.map(item => item.id)).size, 2);
+  for (const session of before) {
+    assert.match(session.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(new Date(session.createdAt).toISOString(), session.createdAt);
+    assert.equal(session.createdAt, session.updatedAt);
+  }
+  await runtime.selectSession(first.id);
+  await runtime.selectSession(second.id);
+  await runtime.cancel(); // No pending request: leave the timestamp unchanged.
+  assert.deepEqual(await runtime.sessions(), before);
+  await runtime.close();
+
+  const storage = await openApplicationStorage(directory);
+  const harness = await Harness.open(storage.storage, { models, registry: createRegistry() }, context);
+  try {
+    const id = await internalId(harness, second.id);
+    await harness.commit(async tx => {
+      (await tx.doc(WorkDoc, id)).request = {
+        requestId: "pending", status: "admitting", content: "research", submissionId: null,
+      };
+    }, context);
+  } finally { await harness.close(context); await storage.close(); }
+  runtime = await DurableRuntime.open(options);
+  await delay(5);
+  await runtime.cancel();
+  const after = await runtime.sessions();
+  assert.deepEqual(after[0], before[0]);
+  assert.equal(after[1].id, second.id);
+  assert.equal(after[1].createdAt, before[1].createdAt);
+  assert.ok(after[1].updatedAt > before[1].updatedAt);
+  await runtime.close();
+  runtime = await DurableRuntime.open(options);
+  assert.deepEqual(await runtime.sessions(), after);
+  assert.deepEqual((await runtime.status()).conversation, second);
 });
 
 test("real durable runtime opens and reopens the unified assistant without scheduling model work", async t => {

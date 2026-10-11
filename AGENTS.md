@@ -24,6 +24,13 @@ Use Linux and Node.js 22.19 or later. Computation uses a shared Python 3.11+ env
 - `npm start`: run the assistant in the current workspace after building.
 - `npm pack`: build and create the distribution archive.
 
+## FFA
+
+本节供 FFA 以外的 agent 使用。
+从工作区根目录运行 `ffa`。
+使用 `ffa --help` 查看 CLI 用法。
+运行 `ffa` 后，输入 `/help` 查看交互命令。
+
 ## Development Principles
 
 Apply these principles to every design and code change:

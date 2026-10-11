@@ -9,42 +9,46 @@ import { fileURLToPath } from "node:url";
 import { emptyWorkspace } from "../dist/domain/workspace.js";
 import { saveWorkspace } from "../dist/infrastructure/workspace.js";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
+import { DurableRuntime } from "../dist/infrastructure/durable-runtime.js";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { terminalRun } from "./helpers/terminal-run.mjs";
 
 const exec = promisify(execFile);
-const terminalRun = `
-import json, os, pty, select, subprocess, sys, termios, time
-master, slave = pty.openpty()
-child = subprocess.Popen(sys.argv[2:], stdin=slave, stdout=slave, stderr=slave)
-os.close(slave)
-sent = False
-raw_at = None
-deadline = time.monotonic() + 8
-try:
-    while child.poll() is None and time.monotonic() < deadline:
-        if select.select([master], [], [], 0.05)[0]:
-            try:
-                os.read(master, 65536)
-            except OSError:
-                break
-        if not sent:
-            raw = not (termios.tcgetattr(master)[3] & termios.ICANON)
-            if raw and raw_at is None:
-                raw_at = time.monotonic()
-            if raw_at is not None and time.monotonic() - raw_at > 0.3:
-                os.write(master, bytes.fromhex(sys.argv[1]))
-                sent = True
-    try:
-        code = child.wait(timeout=0.5)
-    except subprocess.TimeoutExpired:
-        code = None
-    restored = bool(termios.tcgetattr(master)[3] & termios.ICANON)
-    print(json.dumps({"sent": sent, "code": code, "restored": restored}))
-finally:
-    if child.poll() is None:
-        child.kill()
-    child.wait()
-    os.close(master)
-`;
+
+test("--list-sessions returns stored IDs and titles without model configuration or changing the active session", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ffa-list-sessions-")), directory = join(root, ".ffa");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(directory);
+  await saveWorkspace(directory, emptyWorkspace());
+  const models = createModels(); models.setProvider(openaiProvider());
+  const options = { directory, models, model: { provider: "openai", modelId: "gpt-4.1" } };
+  const args = [fileURLToPath(new URL("../dist/main.js", import.meta.url)), "--list-sessions"];
+  const runOptions = { cwd: root, timeout: 10000,
+    env: { PATH: process.env.PATH, HOME: root, XDG_CONFIG_HOME: join(root, "config") } };
+  assert.deepEqual(JSON.parse((await exec(process.execPath, args, runOptions)).stdout), []);
+  let runtime = await DurableRuntime.open(options);
+  let expected, active;
+  try {
+    await runtime.newSession("长期研究");
+    await runtime.newSession();
+    expected = await runtime.sessions();
+    active = (await runtime.status()).conversation;
+  } finally { await runtime.close(); }
+  const listed = JSON.parse((await exec(process.execPath, args, runOptions)).stdout);
+  assert.deepEqual(listed, expected);
+  for (const item of listed) {
+    assert.match(item.id, /^[0-9a-f-]{36}$/);
+    assert.equal(new Date(item.createdAt).toISOString(), item.createdAt);
+    assert.equal(new Date(item.updatedAt).toISOString(), item.updatedAt);
+  }
+  await assert.rejects(exec(process.execPath, [...args, "-p", "research"], runOptions), { code: 1 });
+  runtime = await DurableRuntime.open(options);
+  try {
+    assert.deepEqual((await runtime.status()).conversation, active);
+    assert.deepEqual(await runtime.sessions(), expected);
+  } finally { await runtime.close(); }
+});
 
 for (const [name, input] of [["/quit", "/quit\r"], ["Ctrl+D", "\x04"]]) {
   test(`${name} exits the real CLI after cleanup despite a retained I/O handle`, { timeout: 15000 }, async t => {

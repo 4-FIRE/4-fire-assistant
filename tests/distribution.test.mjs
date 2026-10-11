@@ -27,7 +27,7 @@ test("CLI rejects relative credential paths before creating ModelRuntime",async 
 test("interactive configuration requires a TTY and rejects conflicting modes",async t=>{
   const directory=await temp(t),env=isolatedEnv(directory);
   await assert.rejects(exec(process.execPath,[cli,"--data-dir",directory,"--configure"],{env}),error=>error.stderr.includes("CONFIGURE_NEEDS_TTY"));
-  await assert.rejects(exec(process.execPath,[cli,"--data-dir",directory,"--configure","--prompt","fixture"],{env}),error=>error.stderr.includes("INVALID_ARGUMENTS"));
+  await assert.rejects(exec(process.execPath,[cli,"--data-dir",directory,"--configure","-p","fixture"],{env}),error=>error.stderr.includes("INVALID_ARGUMENTS"));
   assert.ok(!(await readdir(directory)).includes("config.local.json"));
   assert.ok(!(await readdir(directory)).includes("pi"));
 });

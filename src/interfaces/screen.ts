@@ -54,7 +54,7 @@ class PromptEditor extends Editor {
     return accent(truncateToWidth(`❯ ${this.prompt}或命令 ` + "─".repeat(width), width, ""));
   }
 }
-const commands = ["help", "status", "experts", "intents", "confirm", "decline", "resolve", "revoke", "new", "resume", "continue", "cancel", "configure", "quit"];
+const commands = ["help", "status", "experts", "intents", "confirm", "decline", "resolve", "revoke", "new", "resume", "cancel", "configure", "quit"];
 const idleStatus = "就绪 · 输入目标或 /help · 分析不等于交易许可";
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 

@@ -15,6 +15,7 @@ export interface AuthenticationInteraction {
 }
 export interface ModelSelection { provider: string; modelId: string }
 export interface ConversationSummary { id: string; title: string }
+export interface SessionSummary extends ConversationSummary { createdAt: string | null; updatedAt: string | null }
 export interface TranscriptMessage { id: string; role: "user" | "assistant"; text: string }
 export interface WorkSummary {
   requestId: string;
@@ -32,6 +33,7 @@ export interface RuntimeStatus {
   conversation: ConversationSummary;
   work: WorkSummary | null;
   needsContinuation: boolean;
+  otherPendingSessions: readonly { conversation: ConversationSummary; work: WorkSummary }[];
   blocked: readonly string[];
   unfinishedTasks: number;
   business?: Json;
@@ -40,7 +42,7 @@ export interface RuntimeStatus {
 export interface RunResult { requestId: string; status: "answered" | "unanswered" | "cancelled" }
 export interface RuntimePort {
   status(): Promise<RuntimeStatus>;
-  sessions(): Promise<readonly ConversationSummary[]>;
+  sessions(): Promise<readonly SessionSummary[]>;
   intents(): Promise<readonly Json[]>;
   resolveIntent(id: string, revision: number, note: string): Promise<Json>;
   revoke(): void | Promise<void>;

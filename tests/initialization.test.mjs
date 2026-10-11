@@ -127,7 +127,7 @@ test("old workspace formats and unsupported fields are rejected without data los
 
 test("noninteractive new-directory launch refuses creation and does not create model or workspace files", async t => {
   const root = await temp(t);
-  await assert.rejects(exec(process.execPath, [new URL("../dist/main.js", import.meta.url).pathname, "--prompt", "hello"], {
+  await assert.rejects(exec(process.execPath, [new URL("../dist/main.js", import.meta.url).pathname, "-p", "hello"], {
     cwd: root, env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, "config") },
   }), error => error.stderr.includes("WORKSPACE_CONFIRMATION_REQUIRED"));
   assert.deepEqual(await readdir(root), []);
