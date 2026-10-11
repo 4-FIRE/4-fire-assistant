@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { requireThat } from "../common/validation.js";
 import { safePath } from "../common/files.js";
+import { resourceRoot } from "../common/paths.js";
 import { begin, state, saveReady } from "../storage/workspace-state.js";
 import { WorkspaceState } from "../model/workspace.js";
 import type { Receipt } from "../model/receipt.js";
@@ -48,7 +49,8 @@ export class InitializationService {
     }
     this.checkCatalog();
     await prepareDirectories(this.root);
-    await writeFile(join(this.root, "AGENTS.md"), "# 工作区资料\n\n- areas/：长期目标、已确认约束与结论。\n- projects/：具体研究的过程、证据与结果。\n- knowledge/：可复用知识。\n- sources/AGENTS.md：服务手册导航。\n- scratch/：临时计算。\n", { flag: "wx" })
+    const agents = await readFile(join(resourceRoot, "templates/workspace-agents.md"), "utf8");
+    await writeFile(join(this.root, "AGENTS.md"), agents, { flag: "wx" })
       .catch(error => { if (error.code !== "EEXIST") throw error; });
     await documentsReady(this.root, [...new Set(receipts.map(receipt => receipt!.source))]);
     requireThat(await confirm({ root: this.root, market: input.market, quote: receipts[0], history: receipts[1] }), "用户未确认完成。");

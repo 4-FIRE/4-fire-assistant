@@ -95,6 +95,8 @@ return catalog.sources.map(source => source.id);
 
 来源配置见[连接说明](resources/references/connections.md)，Python 环境与限制见[计算说明](resources/references/compute.md)。
 
+包内角色、技能与参考资料在 `resources/` 中维护。`resources/templates/workspace-agents.md` 是根 `AGENTS.md` 的初始模板，只在文件缺失时写入，不覆盖已有正文。`resources/prompts/` 保存初始化请求和公共工具指导；工具指导每个段落对应一条规则。修改包内提示词后执行 `/reload` 重新加载，模板修改不会追溯更新已创建的工作区文件。
+
 ## 变更与恢复边界
 
 所有变更都需要精确准备与用户确认。普通变更使用 `confirmation`；涉及资金、订单、后续自动执行或其他敏感影响的变更使用 `independent`，还需独立复核。

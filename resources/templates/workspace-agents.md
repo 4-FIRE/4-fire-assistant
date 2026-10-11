@@ -1,0 +1,7 @@
+# 工作区资料
+
+- areas/：长期目标、已确认约束与结论。
+- projects/：具体研究的过程、证据与结果。
+- knowledge/：可复用知识。
+- sources/AGENTS.md：服务手册导航。
+- scratch/：临时计算。

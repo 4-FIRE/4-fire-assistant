@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { resourceRoot } from "../common/paths.js";
 import type { SourceService } from "../services/source-service.js";
 import type { ExecutionService } from "../services/execution-service.js";
 import type { InitializationService } from "../services/initialization-service.js";
@@ -39,10 +42,11 @@ export class ToolRegistry {
   readonly #registered = new Map<string, ToolDefinition>();
   constructor(private readonly pi: ExtensionAPI) {}
   register(tools: ToolDefinition[]) {
+    const promptGuidelines = readFileSync(join(resourceRoot, "prompts/tool-guidelines.md"), "utf8")
+      .trim().split(/\r?\n\s*\r?\n/);
     for (const definition of tools) {
       const tool = { ...definition, namespace: { name: "ffa", description: "投资工作区：来源、研究、专家与受控变更。" },
-        promptGuidelines: ["FFA 工具返回结构化对象；检查 success、state 或 failed 判断业务结果。",
-          "有依赖的 FFA 调用按顺序 await；确认与专家任务可能需要较长等待。取消或脚本失败不回滚已发生的副作用。"] };
+        promptGuidelines };
       this.#registered.set(tool.name, tool); this.pi.registerTool(tool);
     }
   }

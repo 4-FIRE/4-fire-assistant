@@ -1,4 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { resourceRoot } from "../common/paths.js";
 import { requireThat } from "../common/validation.js";
 import type { Confirmations } from "../ui/confirmation.js";
 import type { Lifecycle } from "./lifecycle.js";
@@ -12,9 +15,10 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         await ctx.waitForIdle();
         const current = await lifecycle.inspect(ctx.cwd);
         if (current?.status === "ready") { await ctx.reload(); return; }
+        const prompt = await readFile(join(resourceRoot, "prompts/initialization-request.md"), "utf8");
         await lifecycle.start(ctx.cwd, (value, continuing) =>
           confirmations.ask(ctx, continuing ? "继续投资工作区初始化？" : "在此目录创建投资工作区？", value));
-        pi.sendUserMessage("请开始或接续投资工作区初始化，整理已有资料与服务信息，完成数据验证并请求启用确认。");
+        pi.sendUserMessage(prompt.trim());
         return;
       }
       if (command === "status") {
