@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { locateWorkspace, readWorkspace, parseWorkspace, saveWorkspace } from "../dist/infrastructure/workspace.js";
+import { seedWorkspaceDocuments } from "../dist/infrastructure/resources.js";
 import { emptyWorkspace } from "../dist/domain/workspace.js";
 import { openApplicationStorage } from "../dist/infrastructure/storage.js";
 import { WorkspaceServices } from "../dist/infrastructure/workspace-services.js";
@@ -13,7 +14,9 @@ import { TerminalApproval } from "../dist/interfaces/approval.js";
 const exec = promisify(execFile);
 
 test("initialization distinguishes missing, empty and unreadable required documents before confirmation", async t => {
-  const directory = await temp(t);
+  const root = await temp(t), directory = join(root, ".ffa");
+  await mkdir(directory);
+  await seedWorkspaceDocuments(root);
   await saveWorkspace(directory, { ...emptyWorkspace(), sources: { local: {
     connection: { transport: "cli", command: "/usr/bin/printf" },
     operations: [{ name: "print", access: "read", roles: ["coordinator"], schema: { type: "object", additionalProperties: false }, argv: ["local input"] }],
@@ -25,8 +28,9 @@ test("initialization distinguishes missing, empty and unreadable required docume
   const evidence = { ref: "local-query", operation: "local/print", parameters: {}, success: observation.success,
     result: observation.data, binding: services.binding("local/print") };
   const finish = () => services.finish("test", evidence, evidence);
-  const documents = [join(directory, "sources", "local", "GUIDE.md"), join(directory, "AGENTS.md"), join(directory, "sources", "AGENTS.md")];
-  await mkdir(join(directory, "sources", "local"), { recursive: true });
+  const documents = ["sources/local/GUIDE.md", "AGENTS.md", "CLAUDE.md", "areas/AGENTS.md", "projects/AGENTS.md", "knowledge/AGENTS.md", "sources/AGENTS.md", ".agents/skills/AGENTS.md"].map(path => join(root, path));
+  await mkdir(join(root, "sources", "local"), { recursive: true });
+  for (const path of documents) await rm(path, { force: true });
   for (const path of documents) {
     await assert.rejects(finish(), { code: "SOURCE_GUIDE_REQUIRED" });
     await writeFile(path, " \n");
@@ -54,13 +58,13 @@ test("declining workspace creation leaves current directory untouched", async t 
 
 test("creation is explicit, pending and isolated; directory aliases share ownership", async t => {
   const root = await temp(t);
-  const directory = await locateWorkspace(root, async () => true);
+  const location = await locateWorkspace(root, async () => true), { directory } = location;
   assert.deepEqual(await readWorkspace(directory), emptyWorkspace());
   const storage = await openApplicationStorage(directory);
   try {
     const alias = join(await temp(t), "alias");
     await symlink(root, alias, "dir");
-    assert.equal(await locateWorkspace(alias, async () => assert.fail("must not ask again")), directory);
+    assert.deepEqual(await locateWorkspace(alias, async () => assert.fail("must not ask again")), location);
     await assert.rejects(openApplicationStorage(directory), { code: "INSTANCE_IN_USE" });
   } finally { await storage.close(); }
 });
@@ -86,9 +90,9 @@ test("concurrent creation during confirmation cannot overwrite another workspace
 });
 
 test("old workspace formats and unsupported fields are rejected without data loss", async t => {
-  for (const value of [{ version: 1, initialization: "pending", draft: { sources: [] } }, { ...emptyWorkspace(), objective: "research" }]) {
+  for (const value of [{ version: 1, initialization: "pending", draft: { sources: [] } }, { ...emptyWorkspace(), version: 2 }, { ...emptyWorkspace(), objective: "research" }]) {
     assert.throws(() => parseWorkspace(value), { code: "WORKSPACE_INVALID" });
-    const directory = await locateWorkspace(await temp(t), async () => true);
+    const { directory } = await locateWorkspace(await temp(t), async () => true);
     const text = JSON.stringify(value);
     await writeFile(join(directory, "config.json"), text);
     await assert.rejects(readWorkspace(directory), { code: "WORKSPACE_INVALID" });

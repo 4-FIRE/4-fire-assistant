@@ -27,26 +27,37 @@ test("ordinary Python retains inputs, results and failed runs in independent wor
   assert.deepEqual(await first.status(), { available: true, mode: "python" });
   const code = "import json,math\nfrom pathlib import Path\ndata=json.loads(Path('inputs.json').read_text())\nPath('result.json').write_text(json.dumps({'total':math.fsum(data)}))\nprint(json.dumps({'count':len(data)}))\n";
   const inputs = [1, 2, 3.5];
-  const run = await first.run({ project: "study", code, inputs, evidence: [] });
+  const run = await first.run({ owner: "projects/study", code, inputs, evidence: [] });
   assert.equal(run.state, "completed");
   assert.equal(run.exitCode, 0);
   assert.deepEqual(JSON.parse(run.stdout), { count: 3 });
   assert.deepEqual(JSON.parse(await readFile(join(a, run.path, "result.json"), "utf8")), { total: 6.5 });
   assert.deepEqual(JSON.parse(await readFile(join(a, run.path, "inputs.json"), "utf8")), inputs);
   assert.equal(await readFile(join(a, run.path, "main.py"), "utf8"), code);
-  assert.equal((await first.list("study")).runs[0].state, "completed");
-  assert.deepEqual(await second.list(), []);
-  const bad = await second.run({ project: "study", code: "raise ValueError('calculation failed')", inputs: null, evidence: [] });
+  assert.equal((await first.list("projects/study")).runs[0].state, "completed");
+  assert.deepEqual(await second.list(), { runs: [] });
+  const bad = await second.run({ owner: "projects/study", code: "raise ValueError('calculation failed')", inputs: null, evidence: [] });
   assert.equal(bad.state, "failed");
   assert.notEqual(bad.exitCode, 0);
   assert.equal((await readdir(join(a, "projects", "study", "runs"))).length, 1);
   assert.equal((await readdir(join(b, "projects", "study", "runs"))).length, 1);
 
+  const temporary = await first.run({ code: "print(2 + 3)", inputs: null, evidence: [] });
+  assert.equal(temporary.path, `scratch/runs/${temporary.runId}`);
+  assert.equal((await first.list("scratch")).runs[0].id, temporary.runId);
+  const review = await first.run({ owner: "areas/组合/复盘", code: "print(3 * 4)", inputs: null, evidence: [] });
+  assert.equal(review.state, "completed");
+  assert.equal((await first.list("areas/组合")).runs[0].id, review.runId);
+  assert.equal((await first.list()).runs.length, 3);
+  for (const owner of ["", "../escape", "areas/../escape", "areas/.ffa", "projects/study/runs", "/projects/escape"]) {
+    await assert.rejects(first.run({ owner, code: "print(1)", inputs: null, evidence: [] }), { code: "RESEARCH_UNAVAILABLE" });
+  }
+
   const abort = new AbortController();
-  const running = first.run({ project: "cancel", code: "import time\nprint(7,flush=True)\ntime.sleep(30)", inputs: null, evidence: [] }, abort.signal);
+  const running = first.run({ owner: "projects/cancel", code: "import time\nprint(7,flush=True)\ntime.sleep(30)", inputs: null, evidence: [] }, abort.signal);
   let runPath;
   for (let attempt = 0; attempt < 500; attempt++) {
-    const rows = await first.list("cancel");
+    const rows = await first.list("projects/cancel");
     if (rows.runs[0]?.state === "running") {
       runPath = join(a, "projects", "cancel", "runs", rows.runs[0].id);
       try { if ((await readFile(join(runPath, "stdout.txt"), "utf8")).trim()) break; } catch {}
@@ -59,11 +70,12 @@ test("ordinary Python retains inputs, results and failed runs in independent wor
   assert.equal(JSON.parse(await readFile(join(runPath, "stdout.txt"), "utf8")), 7);
   assert.equal(JSON.parse(await readFile(join(runPath, "manifest.json"), "utf8")).state, "cancelled");
   await symlink(b, join(a, "projects", "escape"));
-  await assert.rejects(first.run({ project: "escape", code: "print(1)", inputs: null, evidence: [] }));
-  await assert.rejects(first.run({ project: "../escape", code: "print(1)", inputs: null, evidence: [] }));
+  await assert.rejects(first.list("projects/escape"));
+  await assert.rejects(first.run({ owner: "projects/escape", code: "print(1)", inputs: null, evidence: [] }));
+  await assert.rejects(first.run({ owner: "projects/../escape", code: "print(1)", inputs: null, evidence: [] }));
   const stopped = new AbortController(); stopped.abort();
-  await assert.rejects(first.run({ project: "never-started", code: "print(1)", inputs: null, evidence: [] }, stopped.signal));
-  assert.equal((await first.list()).includes("never-started"), false);
+  await assert.rejects(first.run({ owner: "projects/never-started", code: "print(1)", inputs: null, evidence: [] }, stopped.signal));
+  assert.equal((await first.list()).runs.some(run => run.owner === "projects/never-started"), false);
 
   const child = fork(new URL("./helpers/research-owner.mjs", import.meta.url), [a, runtimeDirectory], {
     execArgv: [], stdio: ["ignore", "ignore", "inherit", "ipc"],
@@ -71,7 +83,7 @@ test("ordinary Python retains inputs, results and failed runs in independent wor
   t.after(() => child.kill("SIGKILL"));
   let interruptedPath;
   for (let attempt = 0; attempt < 500; attempt++) {
-    const rows = await first.list("interrupted");
+    const rows = await first.list("projects/interrupted");
     if (rows.runs[0]?.recordedState === "running") {
       const path = join(a, "projects", "interrupted", "runs", rows.runs[0].id);
       try { if ((await readFile(join(path, "stdout.txt"), "utf8")).trim()) { interruptedPath = path; break; } } catch {}
@@ -81,7 +93,7 @@ test("ordinary Python retains inputs, results and failed runs in independent wor
   assert.ok(interruptedPath);
   const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
   const reopened = new Research(a, { runtimeDirectory });
-  const preserved = (await reopened.list("interrupted")).runs;
+  const preserved = (await reopened.list("projects/interrupted")).runs;
   assert.equal(preserved.length, 1);
   assert.equal(preserved[0].state, "interrupted");
   assert.equal(preserved[0].recordedState, "running");

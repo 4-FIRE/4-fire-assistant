@@ -2,6 +2,5 @@
   "reportContinuation": "read_report 读取完整回执；摘要不能用作资金/数量完整证明",
   "intentStatus": "状态仅表示本地调用记录。Observed 表示结果符合受理或拒绝约定，受理不证明成交；Unknown 不重提。Reconciled 表示终端人工结案，不代表自动核实成交。",
   "toolFailure": "业务工具失败；记录保留，不能据此断定此前副作用未发生。",
-  "intentSnapshot": "只读准备快照（不含权限）：",
-  "memoryStartupFailed": "记忆启动摘要不可用；需要过去上下文时按需 memory_recall，不推断没有旧记忆。"
+  "intentSnapshot": "只读准备快照（不含权限）："
 }

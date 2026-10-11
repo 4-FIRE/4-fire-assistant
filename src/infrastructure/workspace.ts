@@ -25,10 +25,10 @@ export function parseWorkspaceSource(id: string, value: unknown): WorkspaceSourc
   return { connection: connection as unknown as Parameters, operations: contract.operations as unknown as Parameters[] };
 }
 export function parseWorkspace(value: unknown): WorkspaceConfig {
-  if (object(value) && value.version !== 2) {
-    throw new AssistantError("WORKSPACE_INVALID", "工作区版本不受支持，当前格式为 version=2。旧文件未修改；旧版工作区请保留并使用新的工作目录。");
+  if (object(value) && value.version !== 3) {
+    throw new AssistantError("WORKSPACE_INVALID", "工作区版本不受支持，当前格式为 version=3。旧文件未修改；旧版工作区请保留并使用新的工作目录。");
   }
-  if (!object(value) || value.version !== 2 || !object(value.sources) || !object(value.extensions) ||
+  if (!object(value) || value.version !== 3 || !object(value.sources) || !object(value.extensions) ||
       Object.keys(value).some(key => !["version", "initialization", "sources", "extensions"].includes(key))) invalid();
   const initialization = value.initialization;
   if (initialization !== null && (!object(initialization) ||
@@ -38,7 +38,7 @@ export function parseWorkspace(value: unknown): WorkspaceConfig {
     if (!idPattern.test(id) || !object(grants) || Object.entries(grants).some(([role, caps]) =>
       !idPattern.test(role) || !Array.isArray(caps) || caps.some(cap => typeof cap !== "string" || !["read", "prepare", "compute"].includes(cap)))) invalid();
   }
-  return { version: 2, initialization: initialization as WorkspaceConfig["initialization"],
+  return { version: 3, initialization: initialization as WorkspaceConfig["initialization"],
     sources: Object.fromEntries(Object.entries(value.sources).map(([id, source]) => [id, parseWorkspaceSource(id, source)])),
     extensions: structuredClone(value.extensions) as WorkspaceConfig["extensions"] };
 }
@@ -60,13 +60,13 @@ export async function saveWorkspace(directory: string, value: WorkspaceConfig): 
 }
 
 /** No writes before consent. Do not migrate, replace or follow a symlinked .ffa. */
-export async function locateWorkspace(cwd: string, confirm: (root: string) => Promise<boolean>): Promise<string | undefined> {
+export async function locateWorkspace(cwd: string, confirm: (root: string) => Promise<boolean>): Promise<{ root: string; directory: string } | undefined> {
   const root = await realpath(cwd), directory = join(root, ".ffa");
   try {
     const info = await lstat(directory);
     if (!info.isDirectory() || info.isSymbolicLink()) invalid();
     await readWorkspace(directory);
-    return directory;
+    return { root, directory };
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   if (!await confirm(root)) return undefined;
   try { await mkdir(directory, { mode: 0o700 }); }
@@ -77,5 +77,5 @@ export async function locateWorkspace(cwd: string, confirm: (root: string) => Pr
   const file = await open(join(directory, "config.json"), "wx", 0o600);
   try { await file.writeFile(JSON.stringify(emptyWorkspace(), null, 2) + "\n"); await file.sync(); }
   finally { await file.close(); }
-  return directory;
+  return { root, directory };
 }

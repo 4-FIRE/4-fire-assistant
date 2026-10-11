@@ -6,7 +6,7 @@ CLI 与 MCP 都可提供数据或交易能力。程序保存连接、操作权�
 
 locate_cli 的 command 是单独命令名，只定位不执行。inspect_source 接收 connection 和可选 args；CLI 默认 args 为 ["--help"]，MCP 读取工具清单。每次外部发现均需确认。
 
-install_package 接收安装器的绝对 command 与 args，支持 npm/pip/uv/python -m pip。按可信说明安装缺失软件，不用 shell 或 sudo。安装在工作区 packages 下运行；失败可能已产生文件，先核对。
+install_package 接收安装器的绝对 command 与 args，支持 npm/pip/uv/python -m pip。按可信说明安装缺失软件，不用 shell 或 sudo。安装在工作区 .ffa/packages 下运行；失败可能已产生文件，先核对。
 
 configure_source 接收 id、connection 和 operations，确认后立即可用。id 以小写字母开头，只含小写字母、数字和连字符，长度为 1–64；不能含下划线。ID 或参数错误时修正该次调用，不要重建工作区。连接失败保留原配置。remove_source 只移除指定来源及权限，需要确认；保留资料和历史记录。
 

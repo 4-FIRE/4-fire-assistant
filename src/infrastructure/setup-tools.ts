@@ -5,7 +5,6 @@ import type { WorkspaceServices, ConfirmAction } from "./workspace-services.js";
 import { discoverSource, installPackage, locateCli } from "./source-discovery.js";
 import { parseSourceConnection } from "./integrations/connection-config.js";
 import { result } from "./tool-result.js";
-import { dirname } from "node:path";
 
 const native = Type.Record(Type.String(), Type.Unknown());
 const sourceId = Type.String({ pattern: "^[a-z][a-z0-9-]{0,63}$", description: "来源 id：以小写字母开头，只含小写字母、数字和连字符，长度 1–64；不能用下划线。" });
@@ -18,7 +17,7 @@ export function setupTools(services: WorkspaceServices, confirm: ConfirmAction):
       execute: async ({ connection, args }, _api, ctx) => {
         const checked = parseSourceConnection(connection), argv = args ?? ["--help"];
         if (!await confirm("发现服务接口；外部程序须可信，帮助命令也可能产生副作用", JSON.stringify({ connection: checked, args: argv }, null, 2), ctx.abortSignal)) throw new AssistantError("DISCOVERY_DECLINED", "用户取消接口发现。");
-        return result(await discoverSource(checked, argv, dirname(services.directory), ctx.abortSignal));
+        return result(await discoverSource(checked, argv, services.root, ctx.abortSignal));
       } }),
     defineTool({ name: "install_package", description: "按已阅读的可信说明安装本地 CLI/MCP 包。仅支持 npm/pip/uv/python -m pip 安装，执行前确认。远端或已有软件不要重复安装；失败可能留下文件。",
       parameters: Type.Object({ command: Type.String(), args: Type.Array(Type.String(), { minItems: 1, maxItems: 256 }) }, { additionalProperties: false }), replay: "unsafe",

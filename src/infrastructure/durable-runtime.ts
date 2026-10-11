@@ -88,7 +88,7 @@ export class DurableRuntime implements RuntimePort {
     let harness: Harness | undefined;
     try {
       const registry = createRegistry();
-      const business = options.business ? await BusinessIntegration.create({ ...options.business, workingDirectory: storage.directory }, options.model) : undefined;
+      const business = options.business ? await BusinessIntegration.create({ ...options.business, workingDirectory: options.business.workingDirectory ?? options.business.resources?.directory ?? storage.directory }, options.model) : undefined;
       if (business) registry.install(business.extension);
       harness = await Harness.open(storage.storage, { models: options.models, registry,
         env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? storage.directory, shellEnv: { LANG: "C.UTF-8" } }),
@@ -190,7 +190,9 @@ export class DurableRuntime implements RuntimePort {
     const epoch = this.#cancelEpoch;
     const admission = await this.serialize(async () => {
       await this.assertIdle();
+      await this.#business?.refreshResources();
       const conversation = await this.conversation();
+      await this.configureConversation(conversation);
       const request: StoredRequest = { requestId: randomUUID(), content, submissionId: null, status: "admitting" };
       await conversation.commit(async tx => { (await tx.doc(WorkDoc, conversation.id)).request = request; }, context);
       if (epoch !== this.#cancelEpoch) {
@@ -223,6 +225,14 @@ export class DurableRuntime implements RuntimePort {
       if (!status.needsContinuation) throw new AssistantError("NOTHING_TO_CONTINUE", "没有等待恢复的请求。");
       const conversation = await this.conversation();
       const request = (await this.#harness.snapshot(WorkDoc, conversation.id, context))!.request!;
+      await this.#business?.refreshResources();
+      if (this.#business) {
+        await conversation.configure(this.#business.agent("coordinator"), context);
+        const team = await this.#harness.snapshot(TeamDoc, conversation.id, context);
+        for (const expert of team?.experts ?? []) {
+          if (expert.active) await (await this.conversation(expert.conversationId)).configure(this.#business.agent(expert.role), context);
+        }
+      }
       this.#activeRequest = request.requestId;
       // Even if admission succeeded before a crash but its ID was not recorded,
       // the stable requestId finds the original submission.

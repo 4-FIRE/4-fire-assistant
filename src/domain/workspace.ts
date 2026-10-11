@@ -12,13 +12,13 @@ export interface InitializationRecord {
   completedAt: string;
 }
 export interface WorkspaceConfig {
-  version: 2;
+  version: 3;
   initialization: InitializationRecord | null;
   sources: Record<string, WorkspaceSource>;
   extensions: Record<string, Record<string, string[]>>;
 }
 export function emptyWorkspace(): WorkspaceConfig {
-  return { version: 2, initialization: null, sources: {}, extensions: {} };
+  return { version: 3, initialization: null, sources: {}, extensions: {} };
 }
 
 /** Checks provenance, not service-specific quote or bar semantics. */

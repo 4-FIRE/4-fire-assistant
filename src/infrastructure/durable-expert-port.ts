@@ -64,12 +64,12 @@ export function durableExpertPort(api: ToolExecutionApi, ctx: Context, options: 
         if (!expert) {
           const anchor = await tx.createTask(ExpertAnchor, null, { conversationId: scope.ownerId as ConversationId, ownership: { kind: "conversation" }, background: true });
           const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
-          await configure(tx, child.id, options.agent(input.role));
           expert = { expertId: randomUUID(), role: input.role, conversationId: child.id, purpose: input.goal, reportRefs: [], active: null };
           team.experts.push(expert);
           // Chord adopts values by clone; mutate the draft, not the pre-push plain object.
           expert = team.experts[team.experts.length - 1]!;
         }
+        await configure(tx, expert.conversationId, options.agent(input.role));
         const roundId = key;
         const binding = await tx.doc(ExpertDoc, expert.conversationId);
         Object.assign(binding, { role: input.role, ownerId: scope.ownerId, requestId: scope.requestId, roundId, allowedRefs: input.reportRefs ?? [] });

@@ -13,6 +13,6 @@ description: 理解、安装、接入或修复 CLI/MCP 数据与交易服务，�
 
 模型理解原生数据和交易接口，不生成统一行情适配层。configure_source 确认一个来源后即可真实查询。保存 sources/<id>/GUIDE.md，使用 sources/AGENTS.md 索引。手册解释能力、单位、时间、复权、分页、错误和限制，附实际验证引用。
 
-首次初始化需要查询目标市场真实行情和历史 K 线，解释内容与缺口，再以实际 source_read 的 evidenceRef 请求 finish_initialization。交易服务可选，不用真实下单测试。
+首次初始化还须建立可用资料结构并整合根导航与 AGENTS.md。查询目标市场真实行情和历史 K 线，解释内容与缺口，再以实际 source_read 的 evidenceRef 请求 finish_initialization。交易服务可选，不用真实下单测试。
 
 后续接口变化、断线或权限变化只修复受影响来源。configure_source 可重新连接已保存来源；不重做整个工作区初始化。历史手册不证明当前可用，也不授予操作权限。

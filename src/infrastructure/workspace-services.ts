@@ -7,6 +7,7 @@ import { validInitializationEvidence, type WorkspaceConfig, type WorkspaceSource
 import { parseWorkspaceSource, readWorkspace, saveWorkspace } from "./workspace.js";
 import { parseSourceConnection } from "./integrations/connection-config.js";
 import { openSource, parseToolContract } from "./tool-contracts.js";
+import { validateWorkspaceDocuments } from "./resources.js";
 import { ToolSources } from "./integrations/tool-sources.js";
 
 async function requireDocument(path: string): Promise<void> {
@@ -38,11 +39,12 @@ export class WorkspaceServices implements ToolPort {
     services.rebuild();
     return services;
   }
+  get root(): string { return dirname(this.directory); }
   get initialized(): boolean { return this.config.initialization !== null; }
   get extensions() { return this.config.extensions; }
   private rebuild() { this.tools = new ToolSources(new Map([...this.opened].map(([id, source]) => [id, source.tools]))); }
   private connect(id: string, source: WorkspaceSource, signal?: AbortSignal) {
-    return openSource(parseSourceConnection(source.connection), parseToolContract({ version: 1, sourceId: id, operations: source.operations }), dirname(this.directory), signal);
+    return openSource(parseSourceConnection(source.connection), parseToolContract({ version: 1, sourceId: id, operations: source.operations }), this.root, signal);
   }
   private serialize<T>(work: () => Promise<T>): Promise<T> {
     const next = this.tail.then(work); this.tail = next.catch(() => {}); return next;
@@ -86,10 +88,9 @@ export class WorkspaceServices implements ToolPort {
             throw new AssistantError("INITIALIZATION_EVIDENCE_REQUIRED", "需要当前连接的成功行情和历史 K 线查询记录；帮助、文档和旧连接回执无效。");
           }
           const id = evidence.operation.split("/")[0]!;
-          await requireDocument(join(this.directory, "sources", id, "GUIDE.md"));
+          await requireDocument(join(this.root, "sources", id, "GUIDE.md"));
         }
-        await requireDocument(join(this.directory, "AGENTS.md"));
-        await requireDocument(join(this.directory, "sources", "AGENTS.md"));
+        await validateWorkspaceDocuments(this.root);
       };
       await check();
       const snapshot = canonical(this.config.sources as unknown as Json);

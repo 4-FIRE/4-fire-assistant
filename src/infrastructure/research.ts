@@ -13,10 +13,14 @@ const pythonRoot = fileURLToPath(new URL("../../python/", import.meta.url));
 const backendVersion = "0.2.0";
 interface RuntimeRecord { version: string; python: string; pythonVersion: string }
 export interface ResearchSettings { runtimeDirectory: string }
-export interface ResearchInput { project: string; code: string; inputs: Json; evidence: Json[] }
+export interface ResearchInput { owner?: string; code: string; inputs: Json; evidence: Json[] }
 function fail(message: string): never { throw new AssistantError("RESEARCH_UNAVAILABLE", message); }
-function identifier(value: string): void {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/.test(value) || value === "..") fail("研究标识无效。");
+function ownerParts(owner?: string): string[] {
+  if (owner === undefined) return ["scratch"];
+  const parts = owner.split("/");
+  if (parts.length < 2 || parts.length > 12 || !["projects", "areas"].includes(parts[0]!) ||
+      parts.some(part => !part || part.startsWith(".") || part === "runs" || part.length > 96 || /[\\\x00-\x1f:]/.test(part))) fail("计算归属须为 projects 或 areas 下的相对目录；不能包含隐藏目录、runs 或路径跳转。");
+  return parts;
 }
 async function runtimeRecord(directory: string): Promise<RuntimeRecord> {
   const value: unknown = JSON.parse(await readFile(join(directory, "runtime.json"), "utf8"));
@@ -58,31 +62,52 @@ export class Research {
     if (process.platform !== "linux") fail("计算仅支持 Linux。");
     const runtime = await runtimeRecord(this.settings.runtimeDirectory); await access(runtime.python, constants.X_OK); return runtime;
   }
-  async list(project?: string): Promise<Json> {
-    if (project) identifier(project);
-    const directory = join(this.workspace, "projects", ...(project ? [project, "runs"] : []));
-    try {
-      const entries = (await readdir(directory, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name).sort();
-      if (!project) return entries;
-      const runs = [];
-      for (const id of entries) {
-        try {
-          const manifest: unknown = JSON.parse(await readFile(join(directory, id, "manifest.json"), "utf8"));
-          if (!object(manifest)) throw new Error("Invalid experiment record");
-          const interrupted = ["starting", "running"].includes(String(manifest.state)) && !this.activeRuns.has(id);
-          runs.push({ ...manifest, id, ...(interrupted ? { state: "interrupted", recordedState: String(manifest.state) } : {}) });
-        } catch { runs.push({ id, state: "unreadable" }); }
+  async list(owner?: string): Promise<Json> {
+    const root = await realpath(this.workspace), paths: string[] = [];
+    const collect = async (parts: string[]): Promise<void> => {
+      let entries;
+      try { entries = await readdir(join(root, ...parts), { withFileTypes: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        const next = [...parts, entry.name];
+        if (entry.name === "runs") {
+          for (const run of await readdir(join(root, ...next), { withFileTypes: true })) {
+            if (run.isDirectory()) paths.push(join(...next, run.name));
+          }
+        } else if (parts[0] !== "scratch") await collect(next);
       }
-      return { runs };
-    } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return project ? { runs: [] } : []; throw error; }
+    };
+    const starts = owner === undefined ? [["projects"], ["areas"], ["scratch"]] : [owner === "scratch" ? ["scratch"] : ownerParts(owner)];
+    for (const parts of starts) {
+      let exists = true;
+      for (let i = 1; i <= parts.length; i++) {
+        try {
+          const info = await lstat(join(root, ...parts.slice(0, i)));
+          if (!info.isDirectory() || info.isSymbolicLink()) fail("研究目录必须为普通目录。");
+        } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { exists = false; break; } throw error; }
+      }
+      if (exists) await collect(parts);
+    }
+    const runs = [];
+    for (const path of paths.sort()) {
+      const id = path.split("/").at(-1)!;
+      try {
+        const manifest: unknown = JSON.parse(await readFile(join(root, path, "manifest.json"), "utf8"));
+        if (!object(manifest)) throw new Error("Invalid experiment record");
+        const interrupted = ["starting", "running"].includes(String(manifest.state)) && !this.activeRuns.has(id);
+        runs.push({ ...manifest, id, path, ...(interrupted ? { state: "interrupted", recordedState: String(manifest.state) } : {}) });
+      } catch { runs.push({ id, path, state: "unreadable" }); }
+    }
+    return { runs };
   }
   async run(input: ResearchInput, signal?: AbortSignal): Promise<Json> {
-    const exact = structuredClone(input); identifier(exact.project); canonical(exact.inputs);
+    const exact = structuredClone(input), owner = ownerParts(exact.owner); canonical(exact.inputs);
     if (!exact.code.trim() || Buffer.byteLength(JSON.stringify(exact)) > 8 * 1024 * 1024) fail("需要 Python 源码，实验输入上限为 8 MiB。");
     const runtime = await this.check(); signal?.throwIfAborted();
     const runId = randomUUID(), root = await realpath(this.workspace);
     let directory = root;
-    for (const part of ["projects", exact.project, "runs", runId]) {
+    for (const part of [...owner, "runs", runId]) {
       directory = join(directory, part);
       await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
       if (!(await lstat(directory)).isDirectory() || (await lstat(directory)).isSymbolicLink()) fail("研究路径必须为普通目录。");
@@ -90,7 +115,7 @@ export class Research {
     await writeFile(join(directory, "main.py"), exact.code, { mode: 0o600, flag: "wx" });
     await writeFile(join(directory, "inputs.json"), JSON.stringify(exact.inputs), { mode: 0o600, flag: "wx" });
     await writeFile(join(directory, "evidence.json"), JSON.stringify(exact.evidence), { mode: 0o600, flag: "wx" });
-    const manifest: Record<string, Json> = { runId, startedAt: new Date().toISOString(), state: "starting", mode: "python", isolation: "none",
+    const manifest: Record<string, Json> = { runId, owner: owner.join("/"), startedAt: new Date().toISOString(), state: "starting", mode: "python", isolation: "none",
       runtime: { ...runtime }, timeoutMs: 120000, outputBytes: 16777216 };
     const persist = async () => {
       const temporary = join(directory, "manifest.tmp");

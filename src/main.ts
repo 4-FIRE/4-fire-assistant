@@ -79,7 +79,8 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const configDirectory = values["data-dir"] ? dataDirectory({ override: values["data-dir"] }) : machineConfigDirectory();
   const workspaceDirectory = !standalone ? await locateWorkspace(process.cwd(), confirmWorkspaceCreation) : undefined;
   if (!standalone && !workspaceDirectory) return;
-  const directory = workspaceDirectory ?? configDirectory;
+  const directory = workspaceDirectory?.directory ?? configDirectory;
+  const workspaceRoot = workspaceDirectory?.root ?? process.cwd();
   let storage: ApplicationStorage | undefined;
   let application: RuntimePort | undefined;
   let services: WorkspaceServices | undefined;
@@ -125,14 +126,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     const selection: ModelSelection = values.model ? parseModel(values.model) : config.model!;
     requireModel(models, selection);
     storage = await openApplicationStorage(directory);
-    await seedWorkspaceDocuments(directory);
-    const memory = new WorkspaceMemory(join(directory, "memory"));
+    await seedWorkspaceDocuments(workspaceRoot);
+    const memory = new WorkspaceMemory(workspaceRoot);
     const approval = new TerminalApproval(notify);
     const confirmAction = approval.confirmAction.bind(approval);
     services = await WorkspaceServices.open(directory, confirmAction);
-    const research = new Research(directory, { runtimeDirectory: join(dataDirectory(), "runtimes", "compute-0.2.0") });
+    const research = new Research(workspaceRoot, { runtimeDirectory: join(dataDirectory(), "runtimes", "compute-0.2.0") });
     const runtime = await DurableRuntime.open({ directory: storage.directory, storage, models, model: selection,
-      business: { trading: services, services, confirmAction, resources: await ResourceSnapshot.load(directory, services.extensions), research, memory, approval, emergency: notify, ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : {}) },
+      business: { workingDirectory: workspaceRoot, trading: services, services, confirmAction, resources: await ResourceSnapshot.load(workspaceRoot, services.extensions), research, memory, approval, emergency: notify, ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : {}) },
       ...(config.runtime ? { settings: {
         stream: { ...(config.runtime.modelTimeoutMs ? { timeoutMs: config.runtime.modelTimeoutMs } : {}) },
         retry: { ...(config.runtime.generationRetries !== undefined ? { maxRetries: config.runtime.generationRetries } : {}) },

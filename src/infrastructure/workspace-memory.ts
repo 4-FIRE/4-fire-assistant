@@ -1,88 +1,66 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
-import type { MemoryPort, MemoryPage, MemorySummary } from "../application/memory.js";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { join, relative } from "node:path";
+import type { MemoryPort, MemoryMatch, MemoryResults } from "../application/memory.js";
 import { AssistantError } from "../application/ports.js";
 
-const validId = (id: string) => /^[a-z0-9][a-z0-9-]{0,127}$/.test(id);
-const digest = (content: string) => createHash("sha256").update(content).digest("hex");
-const summary = (id: string, content: string): MemorySummary => ({ id, revision: digest(content), summary: content.split("\n").find(line => line.trim())?.slice(0, 240) ?? "" });
-function invalid(): never { throw new AssistantError("MEMORY_INVALID", "记忆标识、版本、内容或存储路径无效；原内容未覆盖。"); }
+const roots = ["AGENTS.md", "README.md", "BOOTSTRAP.md", "SOUL.md", "areas", "projects", "knowledge", "sources", "roles", ".agents/skills", "extensions", "scratch", "docs"];
+const excluded = new Set(["node_modules", "runs", "__pycache__"]);
+const maxBytes = 1024 * 1024;
 
-/** Workspace-local Markdown, atomic updates and optimistic concurrency. No second knowledge database. */
+/** Search the current Markdown sources without copying their content into a store. */
 export class WorkspaceMemory implements MemoryPort {
-  private tail: Promise<unknown> = Promise.resolve();
   constructor(private readonly directory: string) {}
-  private async root(): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const info = await lstat(this.directory);
-    if (!info.isDirectory() || info.isSymbolicLink()) invalid();
-  }
-  private async content(id: string): Promise<string | undefined> {
-    if (!validId(id)) invalid();
-    await this.root();
-    let handle;
-    try { handle = await open(join(this.directory, id + ".md"), constants.O_RDONLY | constants.O_NOFOLLOW); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-    try {
-      const info = await handle.stat();
-      if (!info.isFile() || info.size > 1024 * 1024) invalid();
-      return await handle.readFile("utf8");
-    } finally { await handle.close(); }
-  }
-  async list(query = "", offset = 0) {
-    if (!Number.isSafeInteger(offset) || offset < 0 || query.length > 2000) invalid();
-    await this.root();
-    const entries: MemorySummary[] = [];
-    const files = (await readdir(this.directory)).filter(file => /^[a-z0-9][a-z0-9-]{0,127}\.md$/.test(file)).sort();
-    for (const file of files.slice(offset, offset + 100)) {
-      const id = file.slice(0, -3), content = await this.content(id);
-      if (content !== undefined && (!query || content.toLowerCase().includes(query.toLowerCase()))) entries.push(summary(id, content));
+  async list(query = "", offset = 0, scope?: string): Promise<MemoryResults> {
+    if (typeof query !== "string" || query.length > 2000 || !Number.isSafeInteger(offset) || offset < 0 ||
+        scope !== undefined && (!roots.some(path => scope === path || scope.startsWith(path + "/")) || scope.split("/").some((part, i) => !part || part === "." || part === ".." || part.startsWith(".") && !(i === 0 && part === ".agents") || excluded.has(part)) || scope.includes("\\"))) {
+      throw new AssistantError("MEMORY_INVALID", "请指定资料目录内的相对路径、查询词和有效分页偏移。");
     }
-    return { entries, nextOffset: offset + 100 < files.length ? offset + 100 : null };
-  }
-  async read(id: string, offset = 0, revision?: string): Promise<MemoryPage | undefined> {
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 0 && !revision) invalid();
-    const content = await this.content(id);
-    if (content === undefined) return undefined;
-    const actual = digest(content);
-    if (revision !== undefined && actual !== revision) throw new AssistantError("MEMORY_CHANGED", "记忆已改变，请重新读取后再继续。");
-    return { id, revision: actual, content: content.slice(offset, offset + 16000), nextOffset: offset + 16000 < content.length ? offset + 16000 : null };
-  }
-  private async write(id: string, content: string, revision: string | undefined, immutable: boolean): Promise<MemorySummary> {
-    if (!validId(id) || !content.trim() || Buffer.byteLength(content) > 1024 * 1024) invalid();
-    const work = async () => {
-      const previous = await this.content(id);
-      if (previous !== undefined) {
-        if (immutable && previous === content) return summary(id, previous);
-        if (immutable || !revision || digest(previous) !== revision) throw new AssistantError("MEMORY_CHANGED", "记忆已存在或版本已改变；先读取，显式提供当前 revision 后再修改。");
-      } else if (revision !== undefined) throw new AssistantError("MEMORY_CHANGED", "待修改的记忆不存在。");
-      const temporary = join(this.directory, ".memory-" + randomUUID() + ".tmp");
-      try {
-        const file = await open(temporary, "wx", 0o600);
-        try { await file.writeFile(content, "utf8"); await file.sync(); } finally { await file.close(); }
-        await rename(temporary, join(this.directory, id + ".md"));
-        const parent = await open(this.directory, "r");
-        try { await parent.sync(); } finally { await parent.close(); }
-      } finally { await unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }); }
-      return summary(id, content);
+    const root = await realpath(this.directory), files: string[] = [], skipped: string[] = [];
+    let visited = 0;
+    const walk = async (path: string): Promise<void> => {
+      if (++visited > 20000) throw new AssistantError("MEMORY_SCOPE_TOO_LARGE", "资料范围过大，请用 scope 限定到相关目录。");
+      let info;
+      try { info = await lstat(join(root, path)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+      if (info.isSymbolicLink()) { skipped.push(path); return; }
+      if (info.isDirectory()) {
+        for (const name of (await readdir(join(root, path))).sort()) {
+          if (!name.startsWith(".") && !excluded.has(name)) await walk(path + "/" + name);
+        }
+      } else if (info.isFile() && path.endsWith(".md")) {
+        if (info.size > maxBytes) skipped.push(path); else files.push(path);
+      }
     };
-    const result = this.tail.then(work);
-    this.tail = result.catch(() => {});
-    return result;
+    // Check ancestors for both scoped searches and the allowlisted hidden subtree.
+    for (const path of scope ? [scope] : roots) {
+      const parts = path.split("/");
+      let accessible = true;
+      for (let i = 1; i < parts.length; i++) {
+        try {
+          if ((await lstat(join(root, ...parts.slice(0, i)))).isSymbolicLink()) { skipped.push(path); accessible = false; break; }
+        } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { accessible = false; break; } throw error; }
+      }
+      if (accessible) await walk(path);
+    }
+    const entries: MemoryMatch[] = [], needle = query.toLocaleLowerCase();
+    let matched = 0;
+    for (const path of files.sort()) {
+      const absolute = join(root, path), actual = await realpath(absolute);
+      if (relative(root, actual) !== path) { skipped.push(path); continue; }
+      const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let content: string;
+      try {
+        if ((await handle.stat()).size > maxBytes) { skipped.push(path); continue; }
+        content = await handle.readFile("utf8");
+      } finally { await handle.close(); }
+      const at = needle && !path.toLocaleLowerCase().includes(needle) ? content.toLocaleLowerCase().indexOf(needle) : 0;
+      if (at < 0) continue;
+      if (matched++ < offset) continue;
+      if (entries.length === 30) return { entries, nextOffset: offset + entries.length, skipped };
+      const start = Math.max(0, at - 100);
+      entries.push({ path, line: content.slice(0, start).split("\n").length, excerpt: content.slice(start, start + 600) });
+    }
+    return { entries, nextOffset: null, skipped };
   }
-  async save(content: string, id = "note-" + randomUUID(), revision?: string) {
-    if (id.startsWith("system-")) invalid();
-    return this.write(id, content, revision, false);
-  }
-  async record(key: string, content: string, replace = false) {
-    const id = "system-" + digest(key);
-    if (!replace) return this.write(id, content, undefined, true);
-    const previous = await this.content(id);
-    if (previous === content) return summary(id, previous);
-    if (previous !== undefined) await this.write("system-" + digest(key + ":archive:" + digest(previous)), previous, undefined, true);
-    return this.write(id, content, previous === undefined ? undefined : digest(previous), false);
-  }
-  recorded(key: string) { return this.content("system-" + digest(key)); }
 }

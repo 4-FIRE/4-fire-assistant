@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateToolCall } from "@earendil-works/pi-ai";
@@ -153,7 +153,7 @@ test("real durable runtime opens and reopens the unified assistant without sched
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(directory);
   await saveWorkspace(directory, emptyWorkspace());
-  await seedWorkspaceDocuments(directory);
+  await seedWorkspaceDocuments(root);
   const models = createModels();
   models.setProvider(openaiProvider());
   const approval = new TerminalApproval(message => process.stdout.write(message + "\n"));
@@ -166,7 +166,7 @@ test("real durable runtime opens and reopens the unified assistant without sched
   assert.throws(() => validateToolCall(setup, { type: "toolCall", id: "validate-source", name: "configure_source", arguments: argumentsForSource }));
   assert.equal(validateToolCall(setup, { type: "toolCall", id: "validate-source", name: "configure_source",
     arguments: { ...argumentsForSource, id: "options-trade" } }).id, "options-trade");
-  const business = { services, trading: services, approval, confirmAction, resources: await ResourceSnapshot.load(directory) };
+  const business = { services, trading: services, approval, confirmAction, workingDirectory: root, resources: await ResourceSnapshot.load(root) };
   let runtime = await DurableRuntime.open({ directory, models, model: { provider: "openai", modelId: "gpt-4.1" }, business });
   t.after(() => runtime.close());
   const before = await runtime.status();
@@ -190,6 +190,7 @@ test("real durable runtime opens and reopens the unified assistant without sched
   const storage = await openApplicationStorage(directory);
   const harness = await Harness.open(storage.storage, { models, registry: createRegistry() }, context);
   const owner = await harness.root(context);
+  assert.equal((await owner.agent(context)).cwd, root);
   const pending = { requestId: "unadmitted-request", content: "research objective", status: "admitting", submissionId: null };
   await harness.commit(async tx => { (await tx.doc(WorkDoc, owner.id)).request = pending; }, context);
   await harness.close(context); await storage.close();
@@ -206,4 +207,26 @@ test("real durable runtime opens and reopens the unified assistant without sched
   await runtime.selectSession(resumed.conversation.id);
   assert.equal((await runtime.status()).work.requestId, pending.requestId);
   assert.equal((await runtime.status()).needsContinuation, false);
+});
+
+
+test("new requests reload local roles before admission and leave no work when loading fails", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ffa-role-refresh-")), directory = join(root, ".ffa");
+  await mkdir(join(root, "roles"));
+  const role = join(root, "roles", "coordinator.md");
+  await writeFile(role, "Local role input");
+  const models = createModels(); models.setProvider(openaiProvider());
+  const model = { provider: "openai", modelId: "gpt-4.1" };
+  const runtime = await DurableRuntime.open({ directory, models, model, business: { workingDirectory: root } });
+  t.after(async () => { await runtime.close(); await rm(root, { recursive: true, force: true }); });
+  await rm(role); await mkdir(role);
+  await assert.rejects(runtime.submit("Read existing work"), { code: "EISDIR" });
+  const status = await runtime.status();
+  assert.equal(status.work, null);
+  assert.equal(status.unfinishedTasks, 0);
+  const integration = await BusinessIntegration.create({ workingDirectory: root, resources: ResourceSnapshot.defaults() }, model);
+  const tools = integration.extension.tools.map(tool => tool.name);
+  assert.equal(tools.includes("memory_recall"), true);
+  assert.equal(tools.includes("memory_read"), false);
+  assert.equal(tools.includes("memory_save"), false);
 });
