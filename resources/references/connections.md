@@ -48,7 +48,7 @@ observe 的 execution 不授予变更许可。blocked 可填写用户禁止原�
 
 ## 连接与凭据
 
-凭据只使用环境变量引用：env 值为 ${NAME}，headers 值为 ${NAME} 或 Bearer ${NAME}。不读取或输出凭据值，不把它们写入手册或对话。
+已连接的服务直接使用，需要凭据的只使用环境变量引用：env 值为 ${NAME}，headers 值为 ${NAME} 或 Bearer ${NAME}。不读取或输出凭据值，不把它们写入手册或对话。
 
 CLI 指定绝对 command，不用 shell 字符串。env 可映射子进程环境变量；默认只提供 PATH 和 LANG。每个可调用操作指定 argv，可选 stdin=true。
 
