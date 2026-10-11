@@ -54,25 +54,31 @@ export class ConfirmationDialog implements Component {
   }
 
   render(width: number): string[] {
-    const height = Math.max(1, Math.floor(this.rows()));
-    this.usable = width >= 24 && height >= 8;
+    const height = Math.max(1, Math.floor(this.rows() * 0.7));
+    this.usable = width >= 24 && height >= 10;
     if (!this.usable) {
       return new Text("窗口过小；请放大终端。Esc 取消。", 0, 0).render(Math.max(1, width)).slice(0, height);
     }
-    const content = this.scroll.render(width);
-    const viewport = height - (this.summary === undefined ? 6 : 7);
+    const innerWidth = width - 4;
+    const content = this.scroll.render(innerWidth);
+    const viewport = Math.min(content.length, height - (this.summary === undefined ? 8 : 9));
     this.scroll.updateLayout(content.length, viewport, this.requestRender);
     const start = this.scroll.scrollTop;
     const visible = content.slice(start, start + viewport);
-    while (visible.length < viewport) visible.push("");
-    return [
-      this.theme.fg("accent", truncateToWidth(this.title, width)),
+    const lines = [
+      this.theme.fg("accent", truncateToWidth(this.title, innerWidth)),
       ...visible,
-      this.theme.fg("dim", truncateToWidth(`${start + 1}–${Math.min(start + viewport, content.length)} / ${content.length}`, width)),
-      ...this.choices.render(width),
-      this.theme.fg("dim", truncateToWidth("↑↓滚动 PgUp/PgDn翻页", width)),
-      this.theme.fg("dim", truncateToWidth("Tab切换 Enter选 Esc取消", width)),
-      ...(this.summary === undefined ? [] : [this.theme.fg("dim", this.showingRaw ? "D 查看摘要" : "D 查看完整配置")]),
+      this.theme.fg("dim", truncateToWidth(`${start + 1}–${Math.min(start + viewport, content.length)} / ${content.length}`, innerWidth)),
+      ...this.choices.render(innerWidth),
+      this.theme.fg("dim", truncateToWidth("↑↓滚动 PgUp/PgDn翻页", innerWidth)),
+      this.theme.fg("dim", truncateToWidth("Tab切换 Enter选 Esc取消", innerWidth)),
+      ...(this.summary === undefined ? [] : [this.theme.fg("dim", truncateToWidth(this.showingRaw ? "D 查看摘要" : "D 查看完整配置", innerWidth))]),
+    ];
+    const border = (text: string) => this.theme.fg("accent", text);
+    return [
+      border(`╭${"─".repeat(width - 2)}╮`),
+      ...lines.map(line => `${border("│")} ${truncateToWidth(line, innerWidth, "", true)} ${border("│")}`),
+      border(`╰${"─".repeat(width - 2)}╯`),
     ];
   }
 
@@ -108,7 +114,7 @@ export async function ask(ctx: ExtensionContext, title: string, value: unknown, 
   const allowed = ctx.mode === "tui"
     ? await ctx.ui.custom<boolean>((tui, theme, keys, done) => new ConfirmationDialog(
       title, text, theme, keys, () => tui.terminal.rows, () => tui.requestRender(), done, signal, summary,
-    ), { overlay: true, overlayOptions: { width: 100, anchor: "center" } })
+    ), { overlay: true, overlayOptions: { width: "80%", anchor: "center" } })
     : await ctx.ui.confirm(title, summary === undefined ? text : `${summary}\n\n完整配置：\n${text}`, signal ? { signal } : {});
   signal?.throwIfAborted();
   return allowed === true;
