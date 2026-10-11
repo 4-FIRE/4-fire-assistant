@@ -30,6 +30,8 @@ export function schema(value: unknown): ValidateFunction {
 export function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
-export function result(value: unknown, isError = false) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value, ...(isError ? { isError: true } : {}) };
+export function result(value: unknown, isError = false, text?: string) {
+  const data = json(value);
+  return { content: [{ type: "text" as const, text: text ?? JSON.stringify(data) }],
+    details: data, structuredContent: data, ...(isError ? { isError: true } : {}) };
 }

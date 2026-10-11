@@ -2,14 +2,18 @@ import { readFile, writeFile, realpath } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
 import { defineTool, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Store } from "./storage.js";
+import { ask } from "./confirmation.js";
+import { outputs } from "./output-schemas.js";
+import { operationSignature, operationSummary, sourceSummary } from "./source-display.js";
 import { begin, state, prepareDirectories, documentsReady, finish, mutationTarget, type WorkspaceState } from "./workspace.js";
 import { Sources, parseSource, type Receipt } from "./sources.js";
 import { Trading, type Scope } from "./trading.js";
 import { Experts, resourceRoot, roleText, type ExpertRef } from "./experts.js";
 import { runPython } from "./research.js";
-import { json, requireThat, result, type Params } from "./values.js";
+import { json, object, requireThat, result, type Params } from "./values.js";
 
 interface Active {
   root: string; state: WorkspaceState; store: Store; sources: Sources; trading: Trading; controller: AbortController; notices: string[];
@@ -17,12 +21,6 @@ interface Active {
 const params = Type.Record(Type.String(), Type.Unknown());
 const name = Type.String({ minLength: 1, maxLength: 128 });
 const empty = Type.Object({});
-async function ask(ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal) {
-  requireThat(ctx.hasUI, "此操作需要用户确认通道，非交互模式不能授权。");
-  signal?.throwIfAborted();
-  const choice = await ctx.ui.select(title + "\n" + JSON.stringify(value, null, 2), ["取消", "确认"], signal ? { signal } : {});
-  signal?.throwIfAborted(); return choice === "确认";
-}
 function callSignal(active: Active, signal?: AbortSignal) {
   return signal ? AbortSignal.any([signal, active.controller.signal]) : active.controller.signal;
 }
@@ -32,13 +30,19 @@ export default function ffa(pi: ExtensionAPI) {
   let active: Active | undefined;
   let currentRequest = randomUUID();
   let confirmationQueue: Promise<unknown> = Promise.resolve();
-  const confirm = (ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal) => {
-    const pending = confirmationQueue.then(() => ask(ctx, title, value, signal));
+  const confirm = (ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal, summary?: string) => {
+    const pending = confirmationQueue.then(() => ask(ctx, title, value, signal, summary));
     confirmationQueue = pending.catch(() => undefined); return pending;
   };
   const experts = new Experts();
   const registered = new Map<string, ToolDefinition>();
-  const register = (tool: ToolDefinition) => { registered.set(tool.name, tool); pi.registerTool(tool); };
+  const register = (tool: ToolDefinition) => {
+    tool = { ...tool, namespace: { name: "ffa", description: "投资工作区：来源、研究、专家与受控交易。" },
+      promptGuidelines: ["FFA 工具支持直接调用和 codemode，返回结构化对象。",
+        "配置、初始化、委派和交易按业务顺序 await，不并发推进。确认与专家任务需留出等待时间。",
+        "脚本失败不撤销已完成操作。交易不得自动重试；先查询账本核对。"] };
+    registered.set(tool.name, tool); pi.registerTool(tool);
+  };
   const get = (ready = false) => {
     requireThat(active && !active.controller.signal.aborted, "FFA 未启用；请执行 /ffa init。");
     requireThat(!ready || active.state.status === "ready", "请先完成工作区初始化。"); return active;
@@ -67,6 +71,7 @@ export default function ffa(pi: ExtensionAPI) {
   };
   function queryTool(host?: ExtensionToolContext, evidence?: Set<string>) {
     return defineTool({ name: "ffa_source_read", label: "查询投资来源", description: "调用已确认的只读操作，保存真实回执。使用 ffa_sources 查看来源和参数。",
+      outputSchema: outputs.receipt,
       parameters: Type.Object({ source: name, operation: name, parameters: params }),
       async execute(_id, args, signal, _update, ctx) {
         const a = get(), receipt = await a.sources.read(args.source, args.operation, json(args.parameters) as Params, host ?? ctx, callSignal(a, signal));
@@ -77,6 +82,7 @@ export default function ffa(pi: ExtensionAPI) {
   }
   function pythonTool() {
     return defineTool({ name: "ffa_python", label: "Python 实验", description: "运行普通 Python 并保存源码、输入和结果。不是沙箱。可导入 ffa_compute。owner 可为 projects/名称 或 areas/名称，省略写入 scratch。",
+      outputSchema: outputs.python,
       parameters: Type.Object({ code: Type.String({ minLength: 1, maxLength: 262144 }), inputs: Type.Optional(Type.Unknown()), owner: Type.Optional(Type.String()) }),
       async execute(_id, args, signal) {
         const a = get(true), python = a.store.get<string>("setting", "python") ?? "/usr/bin/python3";
@@ -86,13 +92,23 @@ export default function ffa(pi: ExtensionAPI) {
       } });
   }
   function catalogTool() {
-    return defineTool({ name: "ffa_sources", label: "投资来源", description: "列出本工作区已确认来源和操作约定，不返回凭据。MCP 尚未就绪时用 /mcp 检查。",
-      parameters: empty, async execute() {
-        const a = get(); return result({ sources: a.sources.list().map(s => ({ id: s.id, kind: s.kind, operations: s.operations })), notices: a.notices });
+    return defineTool({ name: "ffa_sources", label: "投资来源", description: "列出已确认操作的名称、描述和参数签名，不返回凭据。指定 source 和 operation 查看完整参数限制与绑定。MCP 未就绪时用 /mcp 检查。",
+      outputSchema: outputs.sources,
+      parameters: Type.Object({ source: Type.Optional(name), operation: Type.Optional(name) }), async execute(_id, args) {
+        const a = get();
+        requireThat(!args.operation || args.source, "查看单个操作时需要指定 source。");
+        const sources = args.source ? [a.sources.source(args.source)] : a.sources.list();
+        const data = { sources: sources.map(s => ({ id: s.id, kind: s.kind,
+          operations: (args.operation ? [a.sources.operation(s.id, args.operation)] : s.operations)
+            .map(op => ({ ...op, signature: operationSignature(op) })) })), notices: a.notices };
+        const text = data.sources.map(s => [`来源：${s.id} · ${s.kind.toUpperCase()}`, s.operations.map(operationSummary).join("\n\n"),
+          ...(args.operation ? ["完整操作约定：", JSON.stringify(s.operations[0], null, 2)] : [])].join("\n")).join("\n\n");
+        return result(data, false, [text || "尚未配置来源。", ...a.notices].join("\n"));
       } });
   }
   function recordTool() {
     return defineTool({ name: "ffa_record", label: "业务记录", description: "分页读取真实查询回执或交易意图。返回 JSON 文本片段，不修改记录。",
+      outputSchema: outputs.record,
       parameters: Type.Object({ kind: Type.Union([Type.Literal("receipt"), Type.Literal("intent")]), id: name,
         offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 16000 })) }),
       async execute(_id, args) {
@@ -104,19 +120,25 @@ export default function ffa(pi: ExtensionAPI) {
   }
   function registerTools() {
     register(catalogTool()); register(queryTool()); register(recordTool());
-    register(defineTool({ name: "ffa_configure_source", label: "配置投资来源", exposure: "model-only", executionMode: "sequential",
+    register(defineTool({ name: "ffa_configure_source", label: "配置投资来源", executionMode: "sequential",
+      outputSchema: outputs.configured,
       description: "经用户确认配置 CLI 或 MCP 来源。先读接入技能及服务说明。配置格式见包内 references/connections.md。凭据仅用 ${ENV_NAME} 引用；写操作不能作为普通 MCP 工具开放。",
       parameters: Type.Object({ source: Type.Unknown() }),
+      renderCall(args) {
+        const source = object(args.source) ? args.source : {};
+        return new Text(`配置来源：${JSON.stringify(source.id ?? "")} · ${JSON.stringify(source.kind ?? "")}\n接口与权限见确认窗口。`, 0, 0);
+      },
       async execute(_id, args, signal, _update, ctx) {
         const a = get(), parsed = parseSource(args.source), cancel = callSignal(a, signal);
         a.trading.revoke();
-        requireThat(await confirm(ctx, "确认来源连接与操作权限（不是交易授权）", parsed, cancel), "用户未确认配置。");
+        requireThat(await confirm(ctx, "确认来源连接与操作权限（不是交易授权）", parsed, cancel, sourceSummary(parsed)), "用户未确认配置。");
         cancel.throwIfAborted(); a.trading.revoke(); await a.sources.configure(parsed);
         a.notices = a.notices.filter(note => !note.startsWith(parsed.id + "："));
         return result({ configured: parsed.id, next: "核实真实查询，并维护 sources/" + parsed.id + "/GUIDE.md。" });
       } }));
     if (get().state.status === "pending") {
-      register(defineTool({ name: "ffa_finish_initialization", label: "完成投资工作区初始化", exposure: "model-only", executionMode: "sequential",
+      register(defineTool({ name: "ffa_finish_initialization", label: "完成投资工作区初始化", executionMode: "sequential",
+        outputSchema: outputs.initialized,
         description: "提交真实行情和历史 K 线回执 ID。检查资料、当前来源及用户确认后完成初始化。不会执行交易。",
         parameters: Type.Object({ market: Type.String({ minLength: 1 }), quote: name, history: name }),
         async execute(_id, args, signal, _update, ctx) {
@@ -142,8 +164,10 @@ export default function ffa(pi: ExtensionAPI) {
     }
     register(pythonTool());
     register(defineTool({ name: "ffa_status", label: "投资工作区状态", description: "查看初始化状态和本工作区待核对交易。不会执行或重发。",
+      outputSchema: outputs.status,
       parameters: empty, async execute() { const a = get(true); return result({ workspace: a.state, unresolved: a.trading.ledger.unsettled(), notices: a.notices }); } }));
     register(defineTool({ name: "ffa_prepare_trade", label: "准备交易", executionMode: "sequential",
+      outputSchema: outputs.intent,
       description: "准备一次精确交易调用，不授权或发送。必须独立复核，再由用户确认。参数变化须准备新方案。",
       parameters: Type.Object({ objective: Type.String({ minLength: 1 }), source: name, operation: name, parameters: params }),
       async execute(_id, args, signal, _update, ctx) {
@@ -153,14 +177,16 @@ export default function ffa(pi: ExtensionAPI) {
         a.sources.preview(args.source, args.operation, parameters);
         return result(a.trading.ledger.prepare(scope(ctx), args.objective, args.source, args.operation, parameters, await a.sources.binding(args.source, args.operation)));
       } }));
-    register(defineTool({ name: "ffa_execute_trade", label: "确认并执行交易", exposure: "model-only", executionMode: "sequential",
+    register(defineTool({ name: "ffa_execute_trade", label: "确认并执行交易", executionMode: "sequential",
+      outputSchema: outputs.intent,
       description: "独立复核通过后，请求用户确认全部原生参数并最多发送一次。结果不明时禁止重发。",
       parameters: Type.Object({ intentId: name }),
       async execute(_id, args, signal, _update, ctx) {
         const a = get(true), cancel = callSignal(a, signal);
         return result(await a.trading.execute(args.intentId, scope(ctx), value => confirm(ctx, "确认一次真实交易", value, cancel), cancel));
       } }));
-    register(defineTool({ name: "ffa_delegate", label: "委派独立专家", exposure: "model-only",
+    register(defineTool({ name: "ffa_delegate", label: "委派独立专家",
+      outputSchema: outputs.expert,
       description: "按需创建研究员或独立交易复核员。expertId 可追问当前分支的研究员。复核必须指定当前 intentId，批准不等于用户授权。",
       parameters: Type.Object({ role: Type.Union([Type.Literal("researcher"), Type.Literal("reviewer")]), goal: Type.String({ minLength: 1, maxLength: 24000 }),
         expertId: Type.Optional(name), intentId: Type.Optional(name) }),
@@ -180,6 +206,7 @@ export default function ffa(pi: ExtensionAPI) {
           requireThat(intent.state === "prepared" && intent.session === originalScope.session && intent.request === originalScope.request, "复核方案不属于当前请求。");
           goal += "\n\n核实以下精确调用。自己查询关键事实，不将主助手报告当作独立证据。通过 ffa_submit_review 登记决定。\n" + JSON.stringify(intent);
           tools.push(defineTool({ name: "ffa_submit_review", label: "登记独立复核", executionMode: "sequential",
+            outputSchema: outputs.review,
             description: "登记本次精确方案的复核决定。通过时必须引用本专家实际取得的查询回执。",
             parameters: Type.Object({ approved: Type.Boolean(), evidenceIds: Type.Array(name), note: Type.String({ minLength: 1 }) }),
             async execute(_id, decision) {

@@ -2,6 +2,12 @@
 
 FFA 使用原生 CLI/MCP 参数，不定义统一行情模型。先读真实服务文档，再提出配置。配置由 ffa_configure_source 请求用户确认。
 
+接入窗口默认显示连接、权限、操作名称、短说明和参数签名。短说明只取首个非空行，最多 80 列，不展开返回字段和公式。按 D 查看完整配置与完整说明；摘要不代替参数限制、CLI 绑定和回执规则。
+
+ffa_sources 默认列接口摘要。指定 source 筛选来源，指定 source 与 operation 查看单个操作的完整约定。可选参数标为 ?；复杂对象和未知引用使用简写，调用前须查看完整 inputSchema。结构化结果保留各操作原始 schema 和 signature。
+
+活动中的 FFA 工具可直接调用，也可通过 codemode 的 tools.ffa_* 调用，并自动进入 ALL_TOOLS。它们返回对象，无需先 JSON.parse。配置和初始化按业务顺序 await，为用户确认留出等待时间。脚本失败不撤销已完成配置或调用；交易不得自动重试。
+
 ## 共同字段
 
 source 包含 id、kind、operations。id 以小写字母开头，只含小写字母、数字或下划线。kind 为 cli 或 mcp。

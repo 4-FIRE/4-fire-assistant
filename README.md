@@ -47,7 +47,15 @@ pi
 | `/ffa resolve ID 核对依据` | 用户确认人工结案，不重发 |
 | `/ffa python /绝对路径/bin/python` | 确认共享 Python 解释器 |
 
-确认窗口默认选择取消。没有确认通道时，初始化、接入变更和交易操作均不能授权。
+所有 FFA 确认窗口默认选择取消。TUI 窗口完整显示详情，详情可滚动，底部操作区保持可见。
+
+使用 ↑↓ 滚动，PgUp/PgDn 翻页，Home/End 到首尾。使用 Tab 切换取消与确认，Enter 执行选择，Esc 取消。窗口过小时只能取消，放大终端后才能确认。
+
+确认窗口居中显示，宽度最多 100 列。来源接入默认显示连接、凭据引用、读写权限、操作名称、短说明和参数签名。短说明只取首个非空行，最多 80 列；完整返回字段、公式和多行说明不放入摘要。
+
+按 D 切换摘要与完整配置；切换后重新选择确认。摘要不代替完整 schema、CLI 参数绑定或交易实际参数。
+
+RPC 使用 Pi 原生确认请求，标题与完整详情分开传送；布局由 RPC 客户端负责。没有确认通道时，初始化、接入变更和交易操作均不能授权。Pi 自带的 MCP OAuth 登录窗口不由 FFA 修改。
 
 ## 资料与工具
 
@@ -59,6 +67,21 @@ pi
 - `ffa_configure_source`、`ffa_finish_initialization`：接入与完成确认。
 - `ffa_python`、`ffa_delegate`：可追溯计算与按需专家。
 - `ffa_prepare_trade`、`ffa_execute_trade`：精确方案与受控执行。
+
+`ffa_sources` 默认显示操作名称、描述和参数签名。指定 `source` 筛选来源，再指定 `operation` 查看完整操作约定。
+
+所有活动中的 FFA 工具均可直接调用，也可由 Pi 原生 codemode 调用。它们自动进入 `ALL_TOOLS`，并归入 `ffa` namespace；没有另建注入机制。工作区未启用或工具关闭时不可调用。FFA 不强制开启 codemode。
+
+每个工具声明 `outputSchema`，脚本直接取得结构化对象。例如：
+
+```js
+const catalog = await tools.ffa_sources({});
+return catalog.sources.map(source => source.id);
+```
+
+`ffa_record` 的对象包含分页 JSON 文本 `text`，这一字段仍是字符串。失败抛错会拒绝调用；带业务数据的失败结果仍返回对象，应检查 `success`、`state` 或 `failed`。使用 `Promise.allSettled()` 收集独立查询的异常。
+
+配置、初始化、专家任务和交易按业务顺序 `await`，不要并发推进。确认与专家任务需要等待时间，不设置过短的脚本截止时间。脚本失败不撤销已完成操作，交易不得自动重试。
 
 来源配置见[连接说明](resources/references/connections.md)，Python 环境与限制见[计算说明](resources/references/compute.md)。
 
