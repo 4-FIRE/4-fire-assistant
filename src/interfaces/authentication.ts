@@ -6,7 +6,7 @@ import { terminalText } from "./terminal.js";
 
 /** Separate control-plane input. Keys/codes are neither model messages nor terminal history. */
 export function terminalAuthentication(): AuthenticationInteraction & { dispose(): void } {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new AssistantError("LOGIN_NEEDS_TTY", "交互登录需要 TTY；非交互使用提供商环境变量，不把凭证发送到对话。");
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new AssistantError("LOGIN_NEEDS_TTY", "登录需要交互终端。非交互模式请使用提供商支持的环境变量。不要把凭证发送到对话。");
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.on("SIGINT", stop);
@@ -24,7 +24,7 @@ export function terminalAuthentication(): AuthenticationInteraction & { dispose(
         const answer = await rl.question("", { signal: signal ? AbortSignal.any([controller.signal,signal]) : controller.signal });
         if (choices) {
           const choice = choices[Number(answer)-1] ?? choices.find(choice=>choice.id===answer);
-          if (!choice) throw new AssistantError("LOGIN_SELECTION", "登录选项无效。");
+          if (!choice) throw new AssistantError("LOGIN_SELECTION", "登录选项无效。请输入选项编号或 ID。");
           return choice.id;
         }
         return answer;

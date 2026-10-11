@@ -50,7 +50,7 @@ export class ExecutionService {
     private readonly interaction: ApprovalInteraction, private readonly env: ExecutionEnvironment, private readonly roles: RolePermissions = builtInPermissions) {}
 
   private guard(scope: Scope): void {
-    if (this.#poisoned) throw new AssistantError("EXECUTION_STORAGE_FAILED", "写入路径已关闭；先重开检查记录与真实状态。");
+    if (this.#poisoned) throw new AssistantError("EXECUTION_STORAGE_FAILED", "交易写入已禁用。请重新启动应用，再核对记录和服务端的实际状态。");
     if (!this.env.isLive(scope)) throw new AssistantError("REQUEST_INACTIVE", "当前请求已停止，不能开始新的查询或写入。");
   }
   private allowed(operation: OperationSpec, scope: Scope): void {
@@ -86,7 +86,7 @@ export class ExecutionService {
         return { result: structuredClone(exact), audit: before.revision === exact.revision ? [] : [audit(exact, "reprepared", { previous: before, current: exact })] };
       }
       // Unknown impact cannot be safely separated across credentials/URLs without an account identity contract.
-      if (intents.some(i => unresolved(i))) throw new AssistantError("UNRESOLVED_OBLIGATION", "已有未解决发送义务；先核对，不能以新请求/连接/参数绕过。");
+      if (intents.some(i => unresolved(i))) throw new AssistantError("UNRESOLVED_OBLIGATION", "已有待核对的交易发送记录。请先核对。不得通过新请求、新连接或新参数绕过此限制。");
       const previous = intents.find(i => i.ownerId === scope.ownerId && i.ownerRequestId === scope.requestId &&
         i.objectiveRef === objectiveRef && i.operation.name === operation.name && i.state === "Proposed" && !i.attempt);
       if (previous) {
@@ -104,15 +104,15 @@ export class ExecutionService {
   async inspect(scope: Scope, id: string): Promise<ExecutionIntent> {
     this.guard(scope);
     const intent = await this.store.read(id);
-    if (!intent) throw new AssistantError("INTENT_MISSING", "执行意图不存在。");
+    if (!intent) throw new AssistantError("INTENT_MISSING", "交易意图不存在。");
     owned(intent, scope, false); return intent;
   }
   async beginReview(scope: Scope, id: string, roundId: string): Promise<ReviewChallenge> {
     requireCapability(scope.role, "delegate", this.roles);
     const intent = await this.inspect(scope, id); owned(intent, scope);
-    if (intent.state !== "Proposed") throw new AssistantError("REVIEW_CLOSED", "本意图不再处于准备阶段。");
+    if (intent.state !== "Proposed") throw new AssistantError("REVIEW_CLOSED", "此交易意图不再处于准备阶段。");
     this.#approvals.delete(id);
-    if (!sameBinding(intent.binding, this.trading.binding(intent.operation.name))) throw new AssistantError("REPREPARE_REQUIRED", "服务/schema 已改变；先重新准备精确方案。");
+    if (!sameBinding(intent.binding, this.trading.binding(intent.operation.name))) throw new AssistantError("REPREPARE_REQUIRED", "服务或参数结构（schema）已变化。请重新准备交易方案和全部参数。");
     const challenge = { intent, roundId, scope: structuredClone(scope) }; this.#rounds.set(roundId, challenge); return challenge;
   }
   async submitReview(scope: Scope, id: string, expertId: string, decision: ReviewDecision, evidence: Evidence[], provided: Evidence[] = []): Promise<{ accepted: boolean; errors: string[] }> {
@@ -121,13 +121,13 @@ export class ExecutionService {
     if (scope.role !== "reviewer" || !challenge || challenge.intent.intentId !== id || challenge.roundId !== scope.roundId ||
         challenge.intent.revision !== intent.revision || challenge.scope.ownerId !== scope.ownerId || challenge.scope.requestId !== scope.requestId ||
         !sameBinding(challenge.intent.binding, intent.binding) || !sameBinding(intent.binding, this.trading.binding(intent.operation.name))) {
-      throw new AssistantError("REVIEW_SCOPE_DENIED", "没有本进程、本轮、当前准备版本的独立复核挑战；历史不能恢复批准。");
+      throw new AssistantError("REVIEW_SCOPE_DENIED", "缺少当前进程、本轮请求和当前方案版本的独立复核请求。历史记录不能恢复批准。");
     }
     const errors = reviewErrors({ decision, operation: intent.operation });
     const accepted = decision.action === "APPROVE" && errors.length === 0;
     await this.store.commit(intents => {
       const stored = intents.find(i => i.intentId === id)!;
-      if (stored.revision !== intent.revision || stored.state !== "Proposed") throw new AssistantError("REVIEW_STALE", "准备已变化，不能登记旧复核。");
+      if (stored.revision !== intent.revision || stored.state !== "Proposed") throw new AssistantError("REVIEW_STALE", "交易方案已变化。不能登记旧版本的复核结果。");
       stored.review = { revision: intent.revision, roundId: scope.roundId, decision: serializable(decision), evidence: structuredClone([...provided, ...evidence]) };
       return { result: null, audit: [audit(stored, "reviewed", { accepted, errors, roundId: scope.roundId, expertId, decision, evidenceRefs: evidence.map(e => e.ref) })] };
     });
@@ -137,7 +137,7 @@ export class ExecutionService {
   private approval(intent: ExecutionIntent, scope: Scope): ApprovalLease {
     const lease = this.#approvals.get(intent.intentId);
     if (!lease || !grantMatches(lease, intent, scope, this.env.processEpoch, this.trading.binding(intent.operation.name))) {
-      throw new AssistantError("REVIEW_REQUIRED", "缺少当前进程、本轮精确参数的独立批准；历史 APPROVE 无效。");
+      throw new AssistantError("REVIEW_REQUIRED", "当前进程和本轮请求的全部参数尚未获得独立复核批准。历史 APPROVE 记录无效。");
     }
     return lease;
   }
@@ -145,7 +145,7 @@ export class ExecutionService {
     this.approval(intent, scope);
   }
   private async locked<T>(id: string, work: () => Promise<T>): Promise<T> {
-    if (this.#locks.has(id)) throw new AssistantError("EXECUTION_BUSY", "同一意图已经等待确认或执行，不重复弹窗/发送。");
+    if (this.#locks.has(id)) throw new AssistantError("EXECUTION_BUSY", "此交易意图正在等待确认或执行。程序不会重复打开确认窗口或发送交易。");
     this.#locks.add(id);
     const next = this.#tail.then(work); this.#tail = next.then(() => undefined, () => undefined);
     try { return await next; } finally { this.#locks.delete(id); }
@@ -156,10 +156,10 @@ export class ExecutionService {
     const initial = await this.inspect(scope, id);
     if (initial.attempt || initial.state !== "Proposed") return initial;
     owned(initial, scope); this.allowed(initial.operation, scope);
-    if (this.#denied.has(`${id}:${initial.revision}`)) throw new AssistantError("AUTHORIZATION_DENIED", "用户已经拒绝/撤销本方案；不重复请求同一许可。");
+    if (this.#denied.has(`${id}:${initial.revision}`)) throw new AssistantError("AUTHORIZATION_DENIED", "用户已拒绝此方案，或已撤销其许可。程序不会重复请求同一许可。");
     this.checkReview(initial, scope);
     // A pending confirmation must not reserve the application-wide write lock.
-    if (this.#locks.has(id)) throw new AssistantError("EXECUTION_BUSY", "同一意图正在等待确认或执行。");
+    if (this.#locks.has(id)) throw new AssistantError("EXECUTION_BUSY", "此交易意图正在等待确认或执行。");
     this.#locks.add(id);
     const existingGrant = this.#authorizations.get(id);
     let confirmed = !!existingGrant && grantMatches(existingGrant, initial, scope, this.env.processEpoch, initial.binding);
@@ -181,7 +181,7 @@ export class ExecutionService {
       this.guard(scope);
       let intent = await this.inspect(scope, id);
       this.checkAuthorization(intent, scope); this.allowed(intent.operation, scope); this.checkReview(intent, scope);
-      if ((await this.store.list()).some(i => i.intentId !== id && unresolved(i))) throw new AssistantError("UNRESOLVED_OBLIGATION", "其他发送义务未解决；未开始本次发送。");
+      if ((await this.store.list()).some(i => i.intentId !== id && unresolved(i))) throw new AssistantError("UNRESOLVED_OBLIGATION", "其他交易发送记录尚未核对完成。本次发送尚未开始。");
       await this.trading.refresh(signal); this.guard(scope);
       this.checkAuthorization(intent, scope); this.allowed(intent.operation, scope); this.checkReview(intent, scope);
       intent = await this.attempt(intent, scope, sourceRef);
@@ -196,7 +196,7 @@ export class ExecutionService {
   private checkAuthorization(intent: ExecutionIntent, scope: Scope): void {
     const grant = this.#authorizations.get(intent.intentId);
     if (!grant || !grantMatches(grant, intent, scope, this.env.processEpoch, this.trading.binding(intent.operation.name))) {
-      throw new AssistantError("AUTHORIZATION_REQUIRED", "当前服务、schema、准备版本或精确参数没有有效用户许可。");
+      throw new AssistantError("AUTHORIZATION_REQUIRED", "当前服务、参数结构（schema）、方案版本或全部参数缺少有效的用户许可。");
     }
   }
   private async attempt(intent: ExecutionIntent, scope: Scope, sourceRef: string): Promise<ExecutionIntent> {
@@ -204,7 +204,7 @@ export class ExecutionService {
     try {
       return await this.store.commit(intents => {
         const stored = intents.find(i => i.intentId === intent.intentId)!;
-        if (stored.revision !== intent.revision || !sameOperation(stored.operation, intent.operation) || !sameBinding(stored.binding, intent.binding)) throw new AssistantError("PREPARATION_STALE", "发送前准备版本已变化。");
+        if (stored.revision !== intent.revision || !sameOperation(stored.operation, intent.operation) || !sameBinding(stored.binding, intent.binding)) throw new AssistantError("PREPARATION_STALE", "交易方案的版本在发送前已变化。");
         startAttempt(stored, { attemptId: this.env.id(), startedAt: this.env.now(), sourceRef });
         return { result: structuredClone(stored), audit: [audit(stored, "dispatch_started", stored.attempt)] };
       });
@@ -233,8 +233,8 @@ export class ExecutionService {
         return { result: null, audit: [audit(stored, stored.state === "ProvenNotSent" ? "proven_not_sent" : "result_unknown")] };
       }); } catch {
         this.poison();
-        this.env.emergency("[可靠存储故障] 发送异常后的状态未能可靠保存。禁止新写；重开后先核对真实状态，不得自动重发。");
-        throw new AssistantError("DISPATCH_STATE_UNCOMMITTED", "发送异常后的状态未可靠归档；写入路径已关闭，请先核对真实状态。");
+        this.env.emergency("[存储故障] 交易发送异常，异常后的状态未能可靠保存。新的交易写入已禁用。请重新启动应用，再核对服务端的实际状态。不得自动重发。");
+        throw new AssistantError("DISPATCH_STATE_UNCOMMITTED", "交易发送异常，异常后的状态未能可靠保存。交易写入已禁用。请先核对服务端的实际状态。");
       }
       return;
     }
@@ -244,18 +244,18 @@ export class ExecutionService {
       return { result: null, audit: [audit(stored, "observed", stored.observation)] };
     }); } catch {
       this.#uncommitted.set(intent.intentId, observation); this.poison();
-      this.env.emergency("[可靠存储故障] 已取得远端回执但未能可靠保存。禁止新写；不能宣称未执行。重开后先核对真实状态。");
-      throw new AssistantError("RECEIPT_UNCOMMITTED", "已知远端回执未可靠归档；写入路径已关闭。");
+      this.env.emergency("[存储故障] 已收到服务端回执，但未能可靠保存。新的交易写入已禁用。不能据此认定交易未执行。请重新启动应用，再核对服务端的实际状态。");
+      throw new AssistantError("RECEIPT_UNCOMMITTED", "服务端回执未能可靠保存。交易写入已禁用。");
     }
   }
   /** Control-plane only. Never registered as a model tool. */
   async resolve(ownerId: number, id: string, revision: number, note: string): Promise<ExecutionIntent> {
-    if (this.#poisoned) throw new AssistantError("EXECUTION_STORAGE_FAILED", "写入路径已关闭；重开后核对记录。");
-    if (!note.trim() || note.length > 4000) throw new AssistantError("RESOLUTION_NOTE_REQUIRED", "人工结案必须提供不超过 4000 字的核对依据。");
+    if (this.#poisoned) throw new AssistantError("EXECUTION_STORAGE_FAILED", "交易写入已禁用。请重新启动应用，再核对记录。");
+    if (!note.trim() || note.length > 4000) throw new AssistantError("RESOLUTION_NOTE_REQUIRED", "人工结案需要核对依据。请输入 1 至 4000 个字符，不能仅包含空白。");
     return this.locked(id, () => this.store.commit(intents => {
       const intent = intents.find(item => item.intentId === id);
       if (!intent || intent.ownerId !== ownerId || intent.revision !== revision || intent.state !== "Unknown") {
-        throw new AssistantError("RESOLUTION_SCOPE_DENIED", "只能结案当前会话中这个精确版本的未知意图。");
+        throw new AssistantError("RESOLUTION_SCOPE_DENIED", "只能对当前会话中结果不明的交易意图进行人工结案。版本必须与当前记录一致。");
       }
       resolveUnknown(intent, this.env.now(), note.trim());
       return { result: structuredClone(intent), audit: [audit(intent, "manually_resolved", intent.reconciliation)] };

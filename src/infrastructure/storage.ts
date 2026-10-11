@@ -30,9 +30,9 @@ export class InstanceLock {
       db.close();
       const code = (error as { errcode?: number }).errcode;
       if (code === 5 || code === 6) {
-        throw new AssistantError("INSTANCE_IN_USE", "该数据目录已被另一个助手进程使用。");
+        throw new AssistantError("INSTANCE_IN_USE", "另一个助手进程正在使用此数据目录。");
       }
-      throw new AssistantError("LOCK_FAILED", "无法取得数据目录所有权；请检查目录权限和锁文件。");
+      throw new AssistantError("LOCK_FAILED", "无法锁定数据目录。请检查目录权限和锁文件。");
     }
   }
   close(): void {
@@ -61,7 +61,7 @@ export async function openApplicationStorage(directory: string): Promise<Applica
     const sync = await db.get<{ synchronous: number }>("PRAGMA synchronous");
     const journal = await db.get<{ journal_mode: string }>("PRAGMA journal_mode");
     if (sync?.synchronous !== 2 || journal?.journal_mode !== "wal") {
-      throw new AssistantError("DURABILITY_UNAVAILABLE", "存储未满足 WAL + FULL；拒绝打开运行时。");
+      throw new AssistantError("DURABILITY_UNAVAILABLE", "存储未启用 WAL 日志模式和 FULL 同步模式。为保护记录，程序已停止启动。");
     }
     const storage = await SqliteStorage.open(db);
     let closed = false;

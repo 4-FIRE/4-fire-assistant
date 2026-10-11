@@ -34,7 +34,7 @@ class MessageBlock implements Component {
   render(width: number): string[] {
     if (!this.text.trim()) return [];
     if (!this.role) return this.content.render(width).map(dim);
-    const label = this.role === "user" ? accent(bold("❯ 你")) : bold(`● 助手${this.streaming ? " · 正在回答" : ""}`);
+    const label = this.role === "user" ? accent(bold("❯ 用户")) : bold(`● 助手${this.streaming ? " · 正在回答" : ""}`);
     const prefix = width > 2 ? (this.role === "user" ? accent("│ ") : "  ") : "";
     const lines = this.content.render(Math.max(1, width - (prefix ? 2 : 0))).slice();
     // Markdown can add a final paragraph spacer. Keep one gap between message blocks.
@@ -51,21 +51,21 @@ class StatusLine implements Component {
 class PromptEditor extends Editor {
   prompt = "输入目标";
   protected override renderTopBorder(width: number): string {
-    return accent(truncateToWidth(`❯ ${this.prompt} /命令 ` + "─".repeat(width), width, ""));
+    return accent(truncateToWidth(`❯ ${this.prompt}或命令 ` + "─".repeat(width), width, ""));
   }
 }
 const commands = ["help", "status", "experts", "intents", "confirm", "decline", "resolve", "revoke", "new", "resume", "continue", "cancel", "configure", "quit"];
-const idleStatus = "就绪 · 输入目标或 /help · 分析不授权交易";
+const idleStatus = "就绪 · 输入目标或 /help · 分析不等于交易许可";
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** One renderer owns the terminal, including asynchronous notices and control dialogs. */
 export class AssistantScreen {
   readonly tui: TuiAltScreen;
   readonly editor: Editor;
-  private readonly header = new StatusLine("4-FIRE · 独立期权助手");
+  private readonly header = new StatusLine("4-FIRE · 交易研究助手");
   private readonly body = new Container();
   private readonly status = new StatusLine("就绪");
-  private readonly hint = new StatusLine("Enter 发送 · Shift+Enter 换行 · Ctrl+P 菜单 · Esc 取消 · Ctrl+D 退出");
+  private readonly hint = new StatusLine("Enter 发送 · Shift+Enter 换行 · Ctrl+P 打开菜单 · Esc 取消工作 · Ctrl+D 退出");
   private readonly scroll: ScrollView;
   private document: { id: string; block: MessageBlock }[] = [];
   private session = "";
@@ -158,7 +158,7 @@ export class AssistantScreen {
     const elapsed = Math.max(0, performance.now() - this.workingSince);
     const seconds = Math.floor(elapsed / 1000);
     const duration = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-    this.setStatus(`${spinner[Math.floor(elapsed / 100) % spinner.length]} ${duration} · ${this.activity} · Esc 取消 · 分析不授权交易`);
+    this.setStatus(`${spinner[Math.floor(elapsed / 100) % spinner.length]} ${duration} · ${this.activity} · Esc 取消工作 · 分析不等于交易许可`);
   }
   setTranscript(text: string): void {
     const content = messageText(text);
@@ -306,7 +306,7 @@ export class AssistantScreen {
         }
         return [...lines.slice(titleOffset, titleOffset + titleRows), ...(showSearch ? search.render(width) : []),
           ...list.render(width).slice(0, available + Number(showCounter)),
-          ...(showHint ? [truncateToWidth(lines.length > titleRows ? "PgUp/PgDn 查看说明 · Enter 确认 · Esc 返回" : `↑↓ 选择 · Enter 确认${options.filter !== false ? " · 输入筛选" : ""} · Esc 返回`, width)] : [])];
+          ...(showHint ? [truncateToWidth(lines.length > titleRows ? "PgUp/PgDn 查看说明 · Enter 确认 · Esc 返回" : `↑↓ 选择 · Enter 确认${options.filter !== false ? " · 输入文字筛选" : ""} · Esc 返回`, width)] : [])];
       },
       invalidate: () => { label.invalidate(); search.invalidate(); list.invalidate(); },
       handleInput: data => {

@@ -33,13 +33,13 @@ function messageText(message: Message): string {
 }
 function currentActivity(live: LiveState | undefined, partial: string): string {
   const tools = live?.tools?.filter(tool => tool.status === "running") ?? [];
-  if (tools.length) return `执行工具：${tools.map(tool => tool.name).join("、")}`;
-  if (live?.compactions?.some(compaction => compaction.blocking)) return "整理上下文";
-  if (live?.generation?.retry) return "等待模型重试";
-  if (live?.generation?.message?.content.some(part => part.type === "thinking") && !partial.trim()) return "模型思考中";
-  if (live?.generation) return partial.trim() ? "正在回答" : "等待模型回复";
+  if (tools.length) return `正在执行工具：${tools.map(tool => tool.name).join("、")}`;
+  if (live?.compactions?.some(compaction => compaction.blocking)) return "正在整理上下文";
+  if (live?.generation?.retry) return "正在等待模型重试";
+  if (live?.generation?.message?.content.some(part => part.type === "thinking") && !partial.trim()) return "模型正在思考";
+  if (live?.generation) return partial.trim() ? "正在回答" : "正在等待模型回答";
   const pendingTools = live?.tools?.filter(tool => tool.status === "pending") ?? [];
-  if (pendingTools.length) return `等待工具：${pendingTools.map(tool => tool.name).join("、")}`;
+  if (pendingTools.length) return `正在等待工具：${pendingTools.map(tool => tool.name).join("、")}`;
   return "正在处理";
 }
 function committedView(session: StoredSession, view: ConversationView): CommittedView {
@@ -103,7 +103,7 @@ export class DurableRuntime implements RuntimePort {
           workspace.activeId = root.id;
         }
         const session = workspace.sessions.find(item => item.id === workspace.activeId);
-        if (!session) throw new AssistantError("WORKSPACE_INVALID", "当前会话索引无效；记录未删除。");
+        if (!session) throw new AssistantError("WORKSPACE_INVALID", "当前会话索引无效。记录未删除。");
         return { ...session };
       }, context);
       const runtime = new DurableRuntime(harness, storage, active, options.model, business);
@@ -118,7 +118,7 @@ export class DurableRuntime implements RuntimePort {
     }
   }
   private checkOpen() {
-    if (this.#closing) throw new AssistantError("RUNTIME_CLOSED", "运行时已关闭；未完成工作可在重开后恢复。");
+    if (this.#closing) throw new AssistantError("RUNTIME_CLOSED", "应用已停止运行。重新启动后，可恢复未完成的工作。");
   }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#operations.then(() => { this.checkOpen(); return operation(); });
@@ -130,7 +130,7 @@ export class DurableRuntime implements RuntimePort {
     if (pending(work?.request)) {
       const agent = await conversation.agent(context);
       if (agent.model && (agent.model.provider !== this.#model.provider || agent.model.modelId !== this.#model.modelId)) {
-        throw new AssistantError("PENDING_MODEL_CHANGE", "未完成工作仍绑定原模型；请先用原模型恢复或取消。");
+        throw new AssistantError("PENDING_MODEL_CHANGE", "未完成的工作仍使用原模型。请先用原模型恢复或取消该工作。");
       }
       return;
     }
@@ -138,7 +138,7 @@ export class DurableRuntime implements RuntimePort {
   }
   private async conversation(id = this.#current.id): Promise<Conversation> {
     const found = await this.#harness.conversation(id, context);
-    if (!found) throw new AssistantError("CONVERSATION_MISSING", "已登记会话不存在；不能以新会话替代。");
+    if (!found) throw new AssistantError("CONVERSATION_MISSING", "找不到已登记的会话。程序不会创建新会话来代替。");
     return found;
   }
   async status(): Promise<RuntimeStatus> {
@@ -173,16 +173,16 @@ export class DurableRuntime implements RuntimePort {
   }
   private assertRecoverable(status: RuntimeStatus): void {
     if (status.blocked.includes("work_association_missing")) {
-      throw new AssistantError("RECOVERY_BLOCKED", "当前主会话或专家存在未关联有效请求的输入；请先 /cancel 取消残留工作。记录和外部订单会保留。");
+      throw new AssistantError("RECOVERY_BLOCKED", "当前主会话或专家任务中有输入未关联有效请求。请先用 /cancel 取消剩余工作。记录和已发送的订单会保留。");
     }
-    if (status.blocked.length) throw new AssistantError("RECOVERY_BLOCKED", `任务定义存在恢复阻塞：${status.blocked.join("、")}；请检查扩展及版本，记录未修改。`);
+    if (status.blocked.length) throw new AssistantError("RECOVERY_BLOCKED", `任务无法恢复：${status.blocked.join("、")}。请检查扩展及其版本。记录未修改。`);
   }
   private async assertIdle(): Promise<void> {
     const status = await this.status();
     this.assertRecoverable(status);
     const live = await this.#harness.snapshot(LiveDoc, this.#current.id, context);
     if (pending(status.work) || live?.run || this.#inProcess.size > 0) {
-      throw new AssistantError("WORK_BUSY", "请等待当前请求，或先 /cancel；重开后的未完成工作使用 /continue。");
+      throw new AssistantError("WORK_BUSY", "请等待当前请求完成，或用 /cancel 取消。重新启动后，用 /continue 恢复未完成的工作。");
     }
   }
   async submit(content: string): Promise<RunResult> {
@@ -197,7 +197,7 @@ export class DurableRuntime implements RuntimePort {
       await conversation.commit(async tx => { (await tx.doc(WorkDoc, conversation.id)).request = request; }, context);
       if (epoch !== this.#cancelEpoch) {
         await conversation.commit(async tx => { (await tx.doc(WorkDoc, conversation.id)).request!.status = "cancelled"; }, context);
-        throw new AssistantError("REQUEST_CANCELLED", "该输入在投递前已取消。");
+        throw new AssistantError("REQUEST_CANCELLED", "此输入在提交前已取消。");
       }
       this.#activeRequest = request.requestId;
       const submission = await this.admit(conversation, request);
@@ -238,7 +238,7 @@ export class DurableRuntime implements RuntimePort {
       // the stable requestId finds the original submission.
       const submission = request.submissionId === null ? await this.admit(conversation, request) :
         await this.#harness.submission(request.submissionId, context);
-      if (!submission) throw new AssistantError("SUBMISSION_MISSING", "已登记输入不存在；不能重复生成替代输入。");
+      if (!submission) throw new AssistantError("SUBMISSION_MISSING", "找不到已登记的输入。程序不会重复生成输入来代替。");
       this.#inProcess.add(request.requestId);
       return { conversation, request, submission };
     });
@@ -261,7 +261,7 @@ export class DurableRuntime implements RuntimePort {
       });
       return { requestId: request.requestId, status: effective };
     } catch (error) {
-      if (this.#closing) throw new AssistantError("WORK_PAUSED", "运行时已关闭，未完成工作保留用于恢复。");
+      if (this.#closing) throw new AssistantError("WORK_PAUSED", "应用已停止运行。未完成的工作已保留，可在重新启动后恢复。");
       throw error;
     } finally {
       this.#inProcess.delete(request.requestId);
@@ -305,7 +305,7 @@ export class DurableRuntime implements RuntimePort {
       await this.assertIdle();
       const workspace = await this.#harness.snapshot(WorkspaceDoc, context);
       const selected = workspace?.sessions.find(session => String(session.id) === id);
-      if (!selected) throw new AssistantError("SESSION_UNAVAILABLE", "该主会话不存在。");
+      if (!selected) throw new AssistantError("SESSION_UNAVAILABLE", "此主会话不存在。");
       await this.configureConversation(await this.conversation(selected.id));
       await this.#harness.commit(async tx => {
         (await tx.doc(WorkspaceDoc)).activeId = selected.id;

@@ -29,27 +29,31 @@ const CLI_OPTIONS = {
   configure: { type: "boolean" }, "configure-file": { type: "string" }, login: { type: "string" }, "login-type": { type: "string" }, "list-models": { type: "boolean" },
 } as const;
 const HELP = `ffa [--data-dir ABSOLUTE_PATH] [--model provider/modelId]
-  当前目录作为工作区；首次使用先确认创建，再通过对话初始化
-  --data-dir PATH        覆盖独立配置或认证命令的配置目录（绝对路径）
-  --prompt TEXT          完成一个明确请求后关闭；不会自动恢复旧请求
-  --continue             明确恢复上次未完成请求后关闭
-  --configure            打开交互配置向导后退出
-  --configure-file PATH  校验并保存应用配置后退出（绝对路径；凭证仅引用环境变量）
-  --login PROVIDER       独立终端登录，复用 Pi 认证存储（需要 TTY）
-  --login-type TYPE      api_key（默认）或 oauth；没有自动 logout
-  --list-models          列出当前可用模型后退出，不选择默认模型
-  --auth-file PATH       覆盖 Pi 标准认证路径（绝对路径）
-  --models-file PATH     覆盖 Pi 标准模型配置路径（绝对路径）
-  --setup-compute        安装固定版本的 Python 计算依赖（需要联网）
+当前目录为工作区。首次使用时，请先确认创建工作区，再通过对话完成初始化。
+方括号表示可选参数。PATH 表示绝对路径。输入时不要包含括号。
+  --data-dir PATH        指定独立配置、登录或模型列表命令使用的配置目录
+  --model provider/modelId  指定模型提供商和模型 ID
+  --prompt TEXT          处理一个请求后退出。不会自动恢复旧请求
+  --continue             确认恢复上次未完成的请求，处理后退出
+  --configure            打开交互配置向导，关闭向导后退出
+  --configure-file PATH  检查并保存应用配置后退出。凭证只能引用环境变量
+  --login PROVIDER       登录模型提供商。使用 Pi 认证存储，需要交互终端
+  --login-type TYPE      选择 api_key（默认）或 oauth。不会自动退出已有登录
+  --list-models          列出可用模型后退出。不会选择默认模型
+  --auth-file PATH       指定 Pi 认证文件
+  --models-file PATH     指定 Pi 模型配置文件
+  --setup-compute        安装指定版本的 Python 计算依赖。需要网络连接
   --compute-status       检查共享 Python 计算环境
-  --help / --version
-交互命令：/help /status /experts /intents /confirm ID VERSION /decline ID VERSION /revoke /new /resume /continue /cancel /configure /quit
-交易助手：模型自主组织研究；真实交易须独立复核并精确确认。`;
+  --help                 显示帮助后退出
+  --version              显示版本后退出
+在对话中输入 /help 查看全部命令、参数和快捷键。
+使用 /resolve <ID> <VERSION> <核对依据> 人工结案结果不明的交易。此命令不执行或重发交易。
+模型自主组织研究。分析不等于交易许可。真实交易需要独立复核和用户确认。`;
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   let parsed: ReturnType<typeof parseArgs<{ options: typeof CLI_OPTIONS }>>;
   try { parsed = parseArgs({ args, options: CLI_OPTIONS, strict: true, allowPositionals: false }); }
-  catch { throw new AssistantError("INVALID_ARGUMENTS", "参数无效；使用 --help 查看用法。"); }
+  catch { throw new AssistantError("INVALID_ARGUMENTS", "参数无效。请用 --help 查看用法。"); }
   const { values } = parsed;
   if (values.help) { process.stdout.write(HELP + "\n"); return; }
   if (values.version) {
@@ -70,12 +74,12 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   const standalone = [values.configure === true, values["configure-file"] !== undefined, values.login !== undefined, values["list-models"] === true].filter(Boolean).length;
   if (standalone > 1 || standalone && (values.prompt !== undefined || values.continue) || values["login-type"] && !values.login ||
-      values.prompt !== undefined && values.continue) throw new AssistantError("INVALID_ARGUMENTS", "配置、登录、模型列表与运行请求不能混用；--prompt 与 --continue 互斥。");
-  if (values["login-type"] && !["api_key", "oauth"].includes(values["login-type"])) throw new AssistantError("INVALID_ARGUMENTS", "登录类型为 api_key 或 oauth。");
+      values.prompt !== undefined && values.continue) throw new AssistantError("INVALID_ARGUMENTS", "配置、登录、模型列表和运行请求不能同时使用。--prompt 和 --continue 不能同时使用。");
+  if (values["login-type"] && !["api_key", "oauth"].includes(values["login-type"])) throw new AssistantError("INVALID_ARGUMENTS", "请将 --login-type 设为 api_key 或 oauth。");
   for (const path of [values["auth-file"], values["models-file"]]) {
-    if (path !== undefined && !isAbsolute(path)) throw new AssistantError("INVALID_CONFIG", "认证/模型路径必须为绝对路径。");
+    if (path !== undefined && !isAbsolute(path)) throw new AssistantError("INVALID_CONFIG", "认证文件和模型配置文件必须使用绝对路径。");
   }
-  if (values["data-dir"] && !standalone) throw new AssistantError("INVALID_ARGUMENTS", "普通运行以当前目录为工作区，不接受 --data-dir。");
+  if (values["data-dir"] && !standalone) throw new AssistantError("INVALID_ARGUMENTS", "运行助手时，当前目录为工作区。此时不能使用 --data-dir。");
   const configDirectory = values["data-dir"] ? dataDirectory({ override: values["data-dir"] }) : machineConfigDirectory();
   const workspaceDirectory = !standalone ? await locateWorkspace(process.cwd(), confirmWorkspaceCreation) : undefined;
   if (!standalone && !workspaceDirectory) return;
@@ -94,24 +98,24 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       if (!isAbsolute(values["configure-file"])) throw new AssistantError("INVALID_CONFIG", "配置文件路径必须为绝对路径。");
       let source: unknown;
       try { source = JSON.parse(await readFile(values["configure-file"], "utf8")); }
-      catch { throw new AssistantError("INVALID_CONFIG", "无法读取有效配置 JSON；原配置未修改。"); }
+      catch { throw new AssistantError("INVALID_CONFIG", "无法读取配置 JSON 文件，或文件格式无效。原配置未修改。"); }
       await writeConfig(configDirectory, parseConfig(source));
-      process.stdout.write("应用配置已校验并保存；下次启动生效。\n"); return;
+      process.stdout.write("应用配置已检查并保存。下次启动时生效。\n"); return;
     }
     let config = await readConfig(configDirectory);
     if (values["auth-file"]) config.authPath = values["auth-file"];
     if (values["models-file"]) config.modelsPath = values["models-file"];
     parseConfig(config);
-    if (values.configure && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new AssistantError("CONFIGURE_NEEDS_TTY", "配置向导需要交互终端；脚本请使用 --configure-file。");
+    if (values.configure && (!process.stdin.isTTY || !process.stdout.isTTY)) throw new AssistantError("CONFIGURE_NEEDS_TTY", "配置向导需要交互终端。在脚本中请使用 --configure-file <绝对路径>。");
     if (!values.login && !values["list-models"] && !values.model && !config.model && !process.stdin.isTTY) {
-      throw new AssistantError("MODEL_REQUIRED", "非交互启动必须提供 --model 或已保存的模型配置。");
+      throw new AssistantError("MODEL_REQUIRED", "非交互模式需要模型配置。请使用 --model 指定模型，或先保存模型配置。");
     }
     let models = await createModelRuntime(config);
     if (values.login) {
       const interaction = terminalAuthentication();
       try { await loginModel(models, values.login, values["login-type"] === "oauth" ? "oauth" : "api_key", interaction); }
       finally { interaction.dispose(); }
-      process.stdout.write("认证操作已完成；复用 Pi 认证存储，未把凭证发送到对话。\n"); return;
+      process.stdout.write("登录已完成。凭证保存在 Pi 认证存储中，未发送到对话。\n"); return;
     }
     if (values["list-models"]) {
       for (const model of await models.getAvailable()) process.stdout.write(terminalText(`${model.provider}/${model.id}`) + "\n");

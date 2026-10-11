@@ -52,7 +52,7 @@ export class WorkspaceServices implements ToolPort {
   async configure(id: string, input: unknown, signal?: AbortSignal): Promise<Json> {
     const source = parseWorkspaceSource(id, input);
     return this.serialize(async () => {
-      if (!await this.confirm("接入或修复一个来源；不授予交易许可", JSON.stringify({ id, ...source }, null, 2), signal)) return { changed: false };
+      if (!await this.confirm("接入或修复服务来源。此确认不授予交易许可。", JSON.stringify({ id, ...source }, null, 2), signal)) return { changed: false };
       signal?.throwIfAborted();
       const opened = await this.connect(id, source, signal);
       try {
@@ -69,8 +69,8 @@ export class WorkspaceServices implements ToolPort {
   }
   async remove(id: string, signal?: AbortSignal): Promise<Json> {
     return this.serialize(async () => {
-      if (!Object.hasOwn(this.config.sources, id)) throw new AssistantError("SOURCE_MISSING", "没有这个来源。");
-      if (!await this.confirm("移除来源；保留资料和交易记录", id, signal)) return { changed: false };
+      if (!Object.hasOwn(this.config.sources, id)) throw new AssistantError("SOURCE_MISSING", "此服务来源不存在。");
+      if (!await this.confirm("移除服务来源。资料和交易记录会保留。", id, signal)) return { changed: false };
       signal?.throwIfAborted();
       const next = structuredClone(this.config); delete next.sources[id];
       await saveWorkspace(this.directory, next); this.config = next;
@@ -81,11 +81,11 @@ export class WorkspaceServices implements ToolPort {
   async finish(market: string, quote: Evidence | undefined, history: Evidence | undefined, signal?: AbortSignal): Promise<Json> {
     return this.serialize(async () => {
       if (this.initialized) return { completed: true, initialization: this.config.initialization as unknown as Json };
-      if (!market.trim()) throw new AssistantError("INITIALIZATION_EVIDENCE_REQUIRED", "需要目标市场与真实查询回执。");
+      if (!market.trim()) throw new AssistantError("INITIALIZATION_EVIDENCE_REQUIRED", "请提供目标市场和实际查询的回执。");
       const check = async () => {
         for (const evidence of [quote, history]) {
           if (!evidence || this.kind(evidence.operation) !== "read" || !validInitializationEvidence(evidence, this.binding(evidence.operation))) {
-            throw new AssistantError("INITIALIZATION_EVIDENCE_REQUIRED", "需要当前连接的成功行情和历史 K 线查询记录；帮助、文档和旧连接回执无效。");
+            throw new AssistantError("INITIALIZATION_EVIDENCE_REQUIRED", "请提供通过当前连接成功查询行情和历史 K 线的记录。帮助信息、文档和旧连接的回执不能代替查询记录。");
           }
           const id = evidence.operation.split("/")[0]!;
           await requireDocument(join(this.root, "sources", id, "GUIDE.md"));
@@ -94,16 +94,16 @@ export class WorkspaceServices implements ToolPort {
       };
       await check();
       const snapshot = canonical(this.config.sources as unknown as Json);
-      if (!await this.confirm("完成初始化：请核对模型对行情和历史 K 线的解释。程序只验证实际调用记录，不判断所有服务的数据语义。", JSON.stringify({ market, quote, history }, null, 2), signal)) return { completed: false };
+      if (!await this.confirm("确认完成工作区初始化。请核对模型对行情和历史 K 线的解释。程序只检查实际调用记录，不能判断各服务返回数据的含义。", JSON.stringify({ market, quote, history }, null, 2), signal)) return { completed: false };
       signal?.throwIfAborted();
-      if (snapshot !== canonical(this.config.sources as unknown as Json)) throw new AssistantError("SOURCE_CHANGED", "接入已经变化，请重新验证。");
+      if (snapshot !== canonical(this.config.sources as unknown as Json)) throw new AssistantError("SOURCE_CHANGED", "服务连接已变化。请重新验证行情和历史 K 线查询。");
       await check();
       const next = { ...this.config, initialization: { market, quoteRef: quote!.ref, historyRef: history!.ref, completedAt: new Date().toISOString() } };
       await saveWorkspace(this.directory, next); this.config = next;
       return { completed: true, initialization: next.initialization };
     });
   }
-  requireInitialized(): void { if (!this.initialized) throw new AssistantError("INITIALIZATION_REQUIRED", "先接通数据服务，验证行情和历史 K 线，再完成初始化。"); }
+  requireInitialized(): void { if (!this.initialized) throw new AssistantError("INITIALIZATION_REQUIRED", "请先连接数据服务，再验证行情和历史 K 线查询。验证后，完成工作区初始化。"); }
   status(): Json { return { initialization: this.config.initialization as unknown as Json, sources: this.tools.status(), unavailable: Object.fromEntries(this.failures) }; }
   catalog() { return this.tools.catalog(); }
   kind(name: string) { return this.tools.kind(name); }

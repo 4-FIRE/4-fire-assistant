@@ -7,26 +7,26 @@ import { object, type Parameters } from "../domain/shared.js";
 import { parseSourceConnection } from "./integrations/connection-config.js";
 import { parseToolContract } from "./tool-contracts.js";
 
-function invalid(): never { throw new AssistantError("WORKSPACE_INVALID", "工作区 config.json 结构无效；原文件未修改。请检查配置，不要删除工作区。"); }
+function invalid(): never { throw new AssistantError("WORKSPACE_INVALID", "工作区 config.json 结构无效。原文件未修改。请检查配置。不要删除工作区。"); }
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 export function parseWorkspaceSource(id: string, value: unknown): WorkspaceSource {
   if (typeof id !== "string" || !idPattern.test(id)) {
-    throw new AssistantError("SOURCE_ID_INVALID", "来源 id 必须以小写字母开头，只含小写字母、数字和连字符，长度为 1–64；不能使用下划线。请修正 configure_source 的 id 后重试，不需要更换工作区。");
+    throw new AssistantError("SOURCE_ID_INVALID", "来源 id 必须以小写字母开头，长度为 1 至 64 个字符。只能使用小写字母、数字和连字符，不能使用下划线。请修正 configure_source 的 id 后重试。无需更换工作区。");
   }
   if (!object(value) || Object.keys(value).some(key => !["connection", "operations"].includes(key))) {
-    throw new AssistantError("SOURCE_CONFIG_INVALID", "来源配置只接受 connection 和 operations。请修正接入参数，不需要更换工作区。");
+    throw new AssistantError("SOURCE_CONFIG_INVALID", "来源配置只接受 connection 和 operations。请修正服务连接参数。无需更换工作区。");
   }
   const connection = parseSourceConnection(value.connection);
   const contract = parseToolContract({ version: 1, sourceId: id, operations: value.operations });
-  if (!contract.operations.length) throw new AssistantError("SOURCE_CONFIG_INVALID", "operations 至少需要一个操作；请修正接入参数。");
+  if (!contract.operations.length) throw new AssistantError("SOURCE_CONFIG_INVALID", "operations 至少需要一个操作。请修正服务连接参数。");
   if (connection.transport === "cli" && contract.operations.some(op => !op.argv || !op.schema)) {
-    throw new AssistantError("SOURCE_CONFIG_INVALID", "CLI 的每个操作都需要 argv 和 schema；请修正接入参数。");
+    throw new AssistantError("SOURCE_CONFIG_INVALID", "每个 CLI 操作都需要 argv 和 schema。请修正服务连接参数。");
   }
   return { connection: connection as unknown as Parameters, operations: contract.operations as unknown as Parameters[] };
 }
 export function parseWorkspace(value: unknown): WorkspaceConfig {
   if (object(value) && value.version !== 3) {
-    throw new AssistantError("WORKSPACE_INVALID", "工作区版本不受支持，当前格式为 version=3。旧文件未修改；旧版工作区请保留并使用新的工作目录。");
+    throw new AssistantError("WORKSPACE_INVALID", "不支持此工作区版本。当前格式为 version=3。旧文件未修改。请保留旧版工作区，并使用新的工作目录。");
   }
   if (!object(value) || value.version !== 3 || !object(value.sources) || !object(value.extensions) ||
       Object.keys(value).some(key => !["version", "initialization", "sources", "extensions"].includes(key))) invalid();
@@ -71,7 +71,7 @@ export async function locateWorkspace(cwd: string, confirm: (root: string) => Pr
   if (!await confirm(root)) return undefined;
   try { await mkdir(directory, { mode: 0o700 }); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new AssistantError("WORKSPACE_CHANGED", "工作区在确认期间发生变化；请重新启动。");
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new AssistantError("WORKSPACE_CHANGED", "工作区在确认期间发生变化。请重新启动应用。");
     throw error;
   }
   const file = await open(join(directory, "config.json"), "wx", 0o600);

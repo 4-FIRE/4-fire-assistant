@@ -37,14 +37,14 @@ function record(value: unknown): value is Record<string, unknown> {
 export function parseModel(value: string): ModelSelection {
   const separator = value.indexOf("/");
   if (separator <= 0 || separator === value.length - 1 || value.trim() !== value) {
-    throw new AssistantError("INVALID_MODEL", "模型格式为 provider/modelId。");
+    throw new AssistantError("INVALID_MODEL", "请按 provider/modelId 格式指定模型。");
   }
   return { provider: value.slice(0, separator), modelId: value.slice(separator + 1) };
 }
 export function parseConfig(value: unknown): ApplicationConfig {
   if (!record(value) || value.version !== 1 ||
       Object.keys(value).some(key => !["version", "model", "authPath", "modelsPath", "thinkingLevel", "runtime", "research"].includes(key))) {
-    throw new AssistantError("INVALID_CONFIG", "配置格式或版本不受支持；原文件未修改。");
+    throw new AssistantError("INVALID_CONFIG", "不支持此配置格式或版本。原文件未修改。");
   }
   const config: ApplicationConfig = { version: 1 };
   if (value.research !== undefined) {
@@ -57,7 +57,7 @@ export function parseConfig(value: unknown): ApplicationConfig {
         !value.model.provider.trim() || typeof value.model.modelId !== "string" ||
         !value.model.modelId.trim() ||
         Object.keys(value.model).some(key => !["provider", "modelId"].includes(key))) {
-      throw new AssistantError("INVALID_CONFIG", "模型配置无效；原文件未修改。");
+      throw new AssistantError("INVALID_CONFIG", "模型配置无效。原文件未修改。");
     }
     config.model = { provider: value.model.provider, modelId: value.model.modelId };
   }
@@ -65,7 +65,7 @@ export function parseConfig(value: unknown): ApplicationConfig {
     const path = value[key];
     if (path !== undefined) {
       if (typeof path !== "string" || !isAbsolute(path)) {
-        throw new AssistantError("INVALID_CONFIG", "覆盖的认证/模型路径必须是绝对路径。");
+        throw new AssistantError("INVALID_CONFIG", "自定义认证文件和模型配置文件必须使用绝对路径。");
       }
       config[key] = path;
     }
@@ -85,18 +85,18 @@ export function parseConfig(value: unknown): ApplicationConfig {
   }
   return config;
 }
-function invalid(): never { throw new AssistantError("INVALID_CONFIG", "配置无效；原文件未修改，敏感内容不会显示。"); }
+function invalid(): never { throw new AssistantError("INVALID_CONFIG", "配置无效。原文件未修改。敏感内容不会显示。"); }
 function positiveInteger(value: unknown, max: number): void { if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > max) invalid(); }
 export async function readConfig(directory: string): Promise<ApplicationConfig> {
   let text: string;
   try { text = await readFile(join(directory, "config.local.json"), "utf8"); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1 };
-    throw new AssistantError("CONFIG_UNREADABLE", "无法读取应用配置；请检查文件权限。");
+    throw new AssistantError("CONFIG_UNREADABLE", "无法读取应用配置。请检查文件权限。");
   }
   let value: unknown;
   try { value = JSON.parse(text); }
-  catch { throw new AssistantError("INVALID_CONFIG", "配置 JSON 无效；原文件未修改。"); }
+  catch { throw new AssistantError("INVALID_CONFIG", "配置 JSON 格式无效。原文件未修改。"); }
   return parseConfig(value);
 }
 export async function writeConfig(directory: string, config: ApplicationConfig): Promise<void> {

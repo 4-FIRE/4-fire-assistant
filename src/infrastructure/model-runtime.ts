@@ -12,7 +12,7 @@ export async function createModelRuntime(config: ApplicationConfig) {
     });
     if (runtime.getError()) throw new Error("Model configuration failed");
     return runtime;
-  } catch { throw new AssistantError("MODEL_CONFIGURATION_FAILED", "Pi 模型/认证配置不可用；原配置保留，详细错误不进入对话。"); }
+  } catch { throw new AssistantError("MODEL_CONFIGURATION_FAILED", "Pi 模型配置或认证配置不可用。原配置已保留。详细错误不会发送到对话。"); }
 }
 export async function loginModel(models: Awaited<ReturnType<typeof createModelRuntime>>, provider: string, type: "api_key" | "oauth", interaction: AuthenticationInteraction): Promise<void> {
   try {
@@ -23,10 +23,10 @@ export async function loginModel(models: Awaited<ReturnType<typeof createModelRu
         event.type === "device_code" ? `${event.verificationUri}\\n设备代码：${event.userCode}` :
         `${event.message}${event.type === "info" ? (event.links ?? []).map(link => `\\n${link.url}`).join("") : ""}`),
     }, { agentName: "4-fire-assistant" });
-  } catch { throw new AssistantError("LOGIN_FAILED", "认证未完成或认证存储同步失败；请检查 Pi 认证状态。未记录凭证或自动退出已有登录。"); }
+  } catch { throw new AssistantError("LOGIN_FAILED", "登录未完成，或认证存储同步失败。请检查 Pi 认证状态。程序未记录凭证，也未退出已有登录。"); }
 }
 export function requireModel(models: Models, selection: ModelSelection): void {
   if (!models.getModel(selection.provider, selection.modelId)) {
-    throw new AssistantError("MODEL_UNAVAILABLE", "所选模型不可用；请重新选择已配置模型。");
+    throw new AssistantError("MODEL_UNAVAILABLE", "所选模型不可用。请重新选择已配置的模型。");
   }
 }
