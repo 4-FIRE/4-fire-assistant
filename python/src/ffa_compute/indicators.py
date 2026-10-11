@@ -6,8 +6,8 @@
 - RSI: Wilder 平滑（ewm(alpha=1/n, adjust=False)）
 - BOLL: 中轨=SMA(n)，上下轨=中轨±2*标准差(n, ddof=0)
 
-所有函数输入 pandas Series / numpy 数组，输出与输入等长的 numpy 数组，
-前导不足窗口处为 NaN，与 backtesting.py self.I() 的向量化要求兼容。
+所有函数输入 pandas Series / numpy 数组，输出与输入等长的 numpy 数组。
+SMA 和 BOLL 的前导不足窗口处为 NaN；EMA、MACD 和 RSI 使用指数加权计算。
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def macd(x, fast: int = 12, slow: int = 26, signal: int = 9):
 
 
 def rsi(x, n: int = 14) -> np.ndarray:
-    """RSI：Wilder 平滑，超买>70 / 超卖<30。"""
+    """RSI：使用 alpha=1/n 的指数加权平滑，首根结果为 NaN。"""
     s = _as_series(x)
     delta = s.diff()
     gain = delta.clip(lower=0.0)

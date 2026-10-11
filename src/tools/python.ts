@@ -8,7 +8,7 @@ import { result } from "./result.js";
 export function pythonTool(service: Pick<ResearchService, "run">, access: CallAccess) {
   return defineTool({
     name: "ffa_python", label: "Python 实验",
-    description: "运行普通 Python 并保存源码、输入和结果。不是沙箱。可导入 ffa_compute。owner 可为 projects/名称 或 areas/名称，省略写入 scratch。",
+    description: "运行 Python 并保存源码、输入和结果。owner 可为 projects/名称 或 areas/名称，省略写入 scratch。环境、产物与可选计算库见 FFA 包内资料根目录下 references/compute.md。不是沙箱。",
     outputSchema: Type.Object({ id: Type.String(), path: Type.String(),
       state: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("cancelled")]), output: Type.Unknown() }),
     parameters: Type.Object({ code: Type.String({ minLength: 1, maxLength: 262144 }), inputs: Type.Optional(Type.Unknown()), owner: Type.Optional(Type.String()) }),

@@ -25,7 +25,7 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   const names = session.getAllTools().map(tool => tool.name);
   assert.ok(names.includes("ffa_python")); assert.ok(names.includes("ffa_delegate"));
   assert.ok(!names.includes("ffa_finish_initialization"));
-  assert.ok(loader.getSkills().skills.length >= 6);
+  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["service-connections", "trading"]);
   const storeFiles = await readdir(join(root, ".ffa"));
   assert.ok(storeFiles.includes("business.sqlite"));
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_source");
@@ -62,7 +62,15 @@ test("expert resource loader excludes project extensions and exposes only role r
   await writeFile(join(root, ".pi/extensions/unwanted.ts"), "throw new Error('must not load');");
   const loader = await expertLoader(root, "reviewer");
   assert.equal(loader.getExtensions().extensions.length, 0);
-  assert.ok(loader.getSkills().skills.length >= 6);
+  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name), ["trading"]);
+  assert.deepEqual((await expertLoader(root, "researcher")).getSkills().skills, []);
+  const local = join(root, ".agents/skills/trading");
+  await mkdir(local, { recursive: true });
+  await writeFile(join(local, "SKILL.md"), "---\nname: trading\ndescription: Workspace method\n---\n");
+  for (const role of ["researcher", "reviewer"]) {
+    const skills = (await expertLoader(root, role)).getSkills().skills;
+    assert.deepEqual(skills.map(skill => skill.filePath), [join(local, "SKILL.md")]);
+  }
 });
 
 const localSource = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [

@@ -41,9 +41,8 @@ export class ToolRegistry {
   register(tools: ToolDefinition[]) {
     for (const definition of tools) {
       const tool = { ...definition, namespace: { name: "ffa", description: "投资工作区：来源、研究、专家与受控变更。" },
-        promptGuidelines: ["FFA 工具支持直接调用和 codemode，返回结构化对象。",
-          "配置、初始化、委派和变更按业务顺序 await，不并发推进。确认与专家任务需留出等待时间。",
-          "脚本失败不撤销已完成操作。变更不得自动重试；先查询账本核对。"] };
+        promptGuidelines: ["FFA 工具返回结构化对象；检查 success、state 或 failed 判断业务结果。",
+          "有依赖的 FFA 调用按顺序 await；确认与专家任务可能需要较长等待。取消或脚本失败不回滚已发生的副作用。"] };
       this.#registered.set(tool.name, tool); this.pi.registerTool(tool);
     }
   }

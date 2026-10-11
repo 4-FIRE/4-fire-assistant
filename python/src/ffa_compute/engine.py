@@ -1,7 +1,7 @@
-"""回测编排：一次运行 = full / IS / OOS 三段（Q6 护栏：同报两组指标）。
+"""分别运行全样本、样本内和样本外回测。
 
-流程：数据（DataFrame）→ 三段切分 → 各自 AShareBacktest.run(**params) →
-抽取指标 → 组装 metrics/series/trades → 由 cli 落盘为运行产物。
+每段独立创建 AShareBacktest，返回指标、序列、成交及拒绝统计。
+本模块不保存文件，由调用方保存所需产物。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pandas as pd
 
 from .broker import AShareBacktest, make_commission
 
-# 报告必含指标 + 扩展指标（对应 Q6「报告必含项」）
+# 回测结果的基础指标与扩展指标。
 REQUIRED_METRICS = ("return_pct", "return_annual_pct", "max_drawdown_pct", "sharpe", "win_rate_pct", "n_trades")
 EXTRA_METRICS = ("profit_factor", "calmar", "sortino", "sqn", "commissions", "buy_hold_return_pct")
 

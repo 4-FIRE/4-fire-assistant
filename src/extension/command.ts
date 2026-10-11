@@ -14,7 +14,7 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         if (current?.status === "ready") { await ctx.reload(); return; }
         await lifecycle.start(ctx.cwd, (value, continuing) =>
           confirmations.ask(ctx, continuing ? "继续投资工作区初始化？" : "在此目录创建投资工作区？", value));
-        pi.sendUserMessage("请引导投资工作区初始化。理解目标市场和已有服务，整合资料，验证真实行情及历史 K 线，最后请求完成确认。不要执行变更。");
+        pi.sendUserMessage("请开始或接续投资工作区初始化，整理已有资料与服务信息，完成数据验证并请求启用确认。");
         return;
       }
       if (command === "status") {

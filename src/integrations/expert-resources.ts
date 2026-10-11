@@ -13,7 +13,8 @@ export async function roleText(role: "coordinator" | "researcher" | "reviewer", 
 export async function expertLoader(root: string, role: ExpertRef["role"]): Promise<ResourceLoader> {
   const bundled = loadSkillsFromDir({ dir: join(resourceRoot, "skills"), source: "ffa" });
   const local = loadSkillsFromDir({ dir: join(root, ".agents", "skills"), source: "workspace" });
-  const skills = [...local.skills, ...bundled.skills.filter(s => !local.skills.some(l => l.name === s.name))];
+  const skills = [...local.skills, ...bundled.skills.filter(s =>
+    role === "reviewer" && s.name === "trading" && !local.skills.some(l => l.name === s.name))];
   const context: { path: string; content: string }[] = [];
   for (const path of ["AGENTS.md", "sources/AGENTS.md"]) {
     try { context.push({ path: join(root, path), content: await readFile(join(root, path), "utf8") }); }

@@ -34,7 +34,7 @@ export class ExpertService {
     if (input.role === "reviewer") {
       const intent = this.execution.get(input.intentId!);
       requireThat(intent.state === "prepared" && intent.session === scope.session && intent.request === scope.request, "复核方案不属于当前请求。");
-      goal += "\n\n核实以下精确调用。自己查询关键事实，不将主助手报告当作独立证据。通过 ffa_submit_review 登记决定。\n" + JSON.stringify(intent);
+      goal += "\n\n本次待复核的精确执行意图：\n" + JSON.stringify(intent);
       submitReview = decision => {
         signal.throwIfAborted();
         requireThat(decision.evidenceIds.every(id => evidence.has(id)), "复核只能引用本专家取得的查询回执。");

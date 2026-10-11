@@ -48,7 +48,7 @@ export class InitializationService {
     }
     this.checkCatalog();
     await prepareDirectories(this.root);
-    await writeFile(join(this.root, "AGENTS.md"), "# 工作区资料\n\n长期事务见 areas，研究见 projects，知识见 knowledge，服务手册见 sources。\n", { flag: "wx" })
+    await writeFile(join(this.root, "AGENTS.md"), "# 工作区资料\n\n- areas/：长期目标、已确认约束与结论。\n- projects/：具体研究的过程、证据与结果。\n- knowledge/：可复用知识。\n- sources/AGENTS.md：服务手册导航。\n- scratch/：临时计算。\n", { flag: "wx" })
       .catch(error => { if (error.code !== "EEXIST") throw error; });
     await documentsReady(this.root, [...new Set(receipts.map(receipt => receipt!.source))]);
     requireThat(await confirm({ root: this.root, market: input.market, quote: receipts[0], history: receipts[1] }), "用户未确认完成。");
