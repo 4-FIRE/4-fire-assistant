@@ -1,25 +1,29 @@
 import type { ExtensionAPI, ExtensionToolContext, ToolDefinition, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { SourceService } from "../services/source-service.js";
+import type { ProviderRegistry } from "../services/provider-registry.js";
 import type { RecordService } from "../services/record-service.js";
 import type { ResearchService } from "../services/research-service.js";
 import type { ExpertRun } from "../services/expert-service.js";
 import type { CallAccess } from "../tools/access.js";
-import { sourcesTool } from "../tools/sources.js";
-import { sourceReadTool } from "../tools/source-read.js";
+import { providersTool } from "../tools/providers.js";
+import { providerCallTool } from "../tools/provider-call.js";
+import type { Confirmations } from "../ui/confirmation.js";
 import { recordTool } from "../tools/record.js";
 import { pythonTool } from "../tools/python.js";
 import { submitReviewTool } from "../tools/submit-review.js";
 import { PiExperts } from "./pi-experts.js";
 
-export function bindExpertRun(pi: ExtensionAPI, host: PiExperts, sources: SourceService, records: RecordService,
+export function bindExpertRun(pi: ExtensionAPI, host: PiExperts, providers: ProviderRegistry, records: RecordService,
   research: ResearchService, access: CallAccess, ctx: ExtensionToolContext, signal: AbortSignal,
-  progress: (value: unknown) => void): ExpertRun {
+  progress: (value: unknown) => void, confirmations: Confirmations): ExpertRun {
   const sessionId = ctx.sessionManager.getSessionId(), leaf = ctx.sessionManager.getLeafId();
   return async task => {
     access.check(true);
     const tools: ToolDefinition[] = [
-      sourcesTool(sources, access),
-      sourceReadTool({ read: (source, operation, parameters, callSignal) => task.read(source, operation, parameters, callSignal) }, access),
+      providersTool(providers, access),
+      providerCallTool({ call: (_scope, provider, operation, parameters, _confirm, callSignal) =>
+        task.call(access.scope(sessionId), provider, operation, parameters,
+          value => confirmations.ask(ctx, "批准专家本次工具调用", value,
+            callSignal ? AbortSignal.any([signal, callSignal]) : signal), callSignal) }, access, confirmations),
       recordTool(records, access), pythonTool(research, access),
     ];
     if (task.submitReview) tools.push(submitReviewTool(task.submitReview, access));

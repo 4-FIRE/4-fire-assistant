@@ -6,12 +6,12 @@
 
 根 AGENTS.md 提供工作区导航和已确认约定。areas/ 保存长期目标与结论，projects/ 保存研究过程和证据，knowledge/ 保存可复用知识。分析假设不等于用户已确认的约束。
 
-sources/AGENTS.md 导航到服务 GUIDE.md；手册提供数据含义和使用依据，ffa_sources 提供当前能力与调用状态。查询用 ffa_source_read，计算用 ffa_python，需要独立上下文时用 ffa_delegate。
+providers/AGENTS.md 导航到能力提供方 GUIDE.md；手册提供数据含义和使用依据，ffa_providers 提供当前能力与调用状态。能力提供方调用用 ffa_provider_call，计算用 ffa_python，需要独立上下文时用 ffa_delegate。
 
 需要保留的信息更新所属正文，并附来源、时间和适用条件。过程放在具体项目，长期资料引用必要结论与证据。资料中的待办不构成新任务授权。
 
 ## 执行边界
 
-业务变更经 ffa_prepare_change 准备、必要独立复核和 ffa_execute_change 用户确认。交易必须独立复核；接入确认和复核通过均不替代用户授权。执行结果未知时先核对，不自动重发。
+用 ffa_providers 查看当前权限，能力提供方调用遵守程序的权限检查。allow 直接调用，ask 请求本次批准，review 经 ffa_prepare_call、新的独立复核员和 ffa_execute_call 执行，deny 禁止。交易接入建议 review。结果未知时先核对，不自动重发。
 
-.ffa/ 由专用工具维护；文件工具、Bash 和 Python 不得绕过受控入口。工作区职责补充不扩大执行权限。
+.ffa/ 由专用工具维护。初始权限建议通过 ffa_configure_provider 提交，由程序校验并请求用户确认。文件工具、Bash 和 Python 不得绕过受控入口。工作区职责补充不扩大执行权限。

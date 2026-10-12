@@ -2,7 +2,7 @@
 
 ## Structure
 
-FFA is a workspace-scoped Pi extension package, not a standalone CLI.
+ffa is a workspace-scoped Pi extension package, not a standalone CLI.
 
 - `src/index.ts`: dependency assembly and registration.
 - `src/tools/`: complete tool contracts, execution adapters, and explicit tool lists.
@@ -11,7 +11,7 @@ FFA is a workspace-scoped Pi extension package, not a standalone CLI.
 - `src/integrations/`: Pi sessions, MCP, CLI, and process execution.
 - `src/storage/`: SQLite reliability, ownership, and workspace state files.
 - `src/extension/`: commands, events, activation, and resource lifetime.
-- `src/ui/`: confirmation queue, dialogs, and source display.
+- `src/ui/`: confirmation queue, dialogs, and provider display.
 - `src/common/`: shared JSON, validation, file, and package-path helpers.
 - `resources/`: roles, skills, and references.
 - `tests/`: necessary Node tests using real local logic and the Pi SDK.
@@ -19,7 +19,7 @@ FFA is a workspace-scoped Pi extension package, not a standalone CLI.
 - `docs/`: current architecture and validation limits.
 - `dist/`: generated test imports. Do not edit generated files.
 
-Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/technical-design.md` for module boundaries and validation limits. Read `docs/capability-design.md` before changing source discovery or execution permissions. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records.
+Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/technical-design.md` for module boundaries and validation limits. Read `docs/capability-design.md` before changing provider discovery or execution permissions. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records.
 
 ## Commands
 
@@ -34,9 +34,9 @@ Use Linux and Node.js 22.19 or later. Computation requires Python 3.11+.
 
 Pi loads the source extension with jiti. The package does not require compiled JavaScript at runtime. Declare host-provided packages as peers, not runtime dependencies.
 
-## FFA
+## ffa
 
-从投资工作区根目录使用 `pi`。本地包安装方式见 README。
+从工作区根目录使用 `pi`。本地包安装方式见 README。
 
 未初始化时只提示 `/ffa init`，不接管普通 Pi 工作。初始化中断不自动继续；完成后通过原生 `/reload` 刷新能力，以后启动自动启用，但不自动开展业务。
 
@@ -53,9 +53,9 @@ Pi loads the source extension with jiti. The package does not require compiled J
 - Keep each module focused. Do not add unused interfaces or forwarding layers.
 - Do not create a plugin platform, fixed research workflow, compatibility layer, or second main agent.
 - Keep tools inactive until the workspace enables them.
-- Keep every discovered source capability in the catalog, including unresolved, blocked, and unavailable operations.
-- Separate business purpose, state effect, and execution requirements. Do not classify a service by its name.
-- Check change permissions at the actual send boundary, not only in prompts or tool hooks. Trading still requires independent review.
+- Keep every discovered provider capability in the catalog, including unresolved, blocked, and unavailable operations.
+- Keep native capability facts separate from user tool permissions. Do not classify a provider by its name.
+- Check tool permissions at the actual send boundary, not only in prompts or tool hooks. Initialize known trading tools with review permissions. Models submit permission suggestions through tools; code owns persistence.
 - Do not claim host isolation for Bash, Python, or extensions.
 - Do not add file hash verification in code, tests, builds, or checks.
 
@@ -63,17 +63,17 @@ Pi loads the source extension with jiti. The package does not require compiled J
 
 Use TypeScript ESM, two-space indentation, double quotes, semicolons, and `.js` suffixes in relative imports. Use `import type` for type-only imports. Keep strict compiler checks.
 
-Use camelCase for variables and functions, PascalCase for types, and kebab-case for multiword filenames. Keep service details in their integration.
+Use camelCase for variables and functions, PascalCase for types, and kebab-case for multiword filenames. Keep provider details in their integration.
 
 ## Tests
 
 Use `node:test` and `node:assert/strict`. Import compiled modules from dist. Test concrete correctness risks, not coverage counts or implementation structure.
 
-Do not use mocks, stubs, fake models, simulated services, real trades, or personal credentials. Use actual local files, SQLite, processes, calculations, and Pi SDK behavior.
+Do not use mocks, stubs, fake models, simulated providers, real trades, or personal credentials. Use actual local files, SQLite, processes, calculations, and Pi SDK behavior.
 
 Do not test documentation, prompt text, labels, or message wording. Parsing and serialization may verify structured values when they form the logic contract.
 
-Real model and external service acceptance requires an approved environment. Record remaining gaps; local tests do not prove those behaviors.
+Real model and external provider acceptance requires an approved environment. Record remaining gaps; local tests do not prove those behaviors.
 
 ## Submission
 

@@ -1,17 +1,19 @@
 import type { Params } from "../common/json.js";
 import type { Observation } from "./receipt.js";
+import type { Permission } from "./permission.js";
 
 export class Intent {
   declare id: string;
   declare session: string;
   declare request: string;
   declare objective: string;
-  declare source: string;
+  declare provider: string;
   declare operation: string;
   declare parameters: Params;
   declare binding: string;
   declare createdAt: string;
-  declare execution: "confirmation" | "independent";
+  declare permission: Exclude<Permission, "deny">;
+  declare receiptId?: string;
   declare state: "prepared" | "dispatched" | "observed" | "unknown" | "closed" | "declined";
   declare attempt?: { id: string; at: string };
   declare observation?: Observation;

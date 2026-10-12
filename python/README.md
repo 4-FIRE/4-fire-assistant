@@ -1,6 +1,6 @@
 # 可选 Python 计算库
 
-需要 Linux 和 Python 3.11+。使用标准 Python 或 uv 工具准备共享环境，通过 `/ffa python /绝对路径/bin/python` 确认解释器。FFA 不在启动时自动安装依赖。
+需要 Linux 和 Python 3.11+。使用标准 Python 或 uv 工具准备共享环境，通过 `/ffa python /绝对路径/bin/python` 确认解释器。ffa 不在启动时自动安装依赖。
 
 `ffa_python` 执行普通源码，保存输入、输出与产物；项目、长期事务和临时运行分别存放。参数与限制见[计算说明](../resources/references/compute.md)。它不是沙箱，也不提供交易权限。
 

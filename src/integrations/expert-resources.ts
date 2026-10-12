@@ -16,11 +16,11 @@ export async function expertLoader(root: string, role: ExpertRef["role"]): Promi
   const skills = [...local.skills, ...bundled.skills.filter(s =>
     role === "reviewer" && s.name === "trading" && !local.skills.some(l => l.name === s.name))];
   const context: { path: string; content: string }[] = [];
-  for (const path of ["AGENTS.md", "sources/AGENTS.md"]) {
+  for (const path of ["AGENTS.md", "providers/AGENTS.md"]) {
     try { context.push({ path: join(root, path), content: await readFile(join(root, path), "utf8") }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
-  const prompt = "FFA 包内资料根目录：" + resourceRoot + "\n" + await roleText(role, root);
+  const prompt = "ffa 包内资料根目录：" + resourceRoot + "\n" + await roleText(role, root);
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills, diagnostics: [...local.diagnostics, ...bundled.diagnostics] }),

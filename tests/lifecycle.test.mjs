@@ -7,20 +7,20 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { assertExpertBranch } from "../dist/integrations/expert-tools.js";
 
 const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
-  { name: "echo", description: "Read JSON", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
+  { name: "echo", description: "Read JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
 ] };
 
 test("old tool references cannot access a reopened workspace instance", async t => {
   const { session } = await host(t, "ready", [cli]);
-  const old = session.agent.state.tools.find(tool => tool.name === "ffa_source_read");
-  const first = await old.execute("first", { source: "local", operation: "echo", parameters: { n: 1 } });
+  const old = session.agent.state.tools.find(tool => tool.name === "ffa_provider_call");
+  const first = await old.execute("first", { provider: "local", operation: "echo", parameters: { n: 1 } });
   assert.equal(first.structuredContent.success, true);
   await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" });
-  await assert.rejects(old.execute("closed", { source: "local", operation: "echo", parameters: {} }));
+  await assert.rejects(old.execute("closed", { provider: "local", operation: "echo", parameters: {} }));
   await session.extensionRunner.emit({ type: "session_start" });
-  await assert.rejects(old.execute("reopened", { source: "local", operation: "echo", parameters: {} }));
-  const fresh = session.agent.state.tools.find(tool => tool.name === "ffa_source_read");
-  const next = await fresh.execute("fresh", { source: "local", operation: "echo", parameters: { n: 2 } });
+  await assert.rejects(old.execute("reopened", { provider: "local", operation: "echo", parameters: {} }));
+  const fresh = session.agent.state.tools.find(tool => tool.name === "ffa_provider_call");
+  const next = await fresh.execute("fresh", { provider: "local", operation: "echo", parameters: { n: 2 } });
   assert.equal(next.structuredContent.success, true);
   assert.deepEqual(next.structuredContent.data, { n: 2 });
   assert.notEqual(next.structuredContent.id, first.structuredContent.id);

@@ -14,9 +14,9 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
     try {
       const current = await lifecycle.inspect(ctx.cwd);
       if (current?.status === "ready") await lifecycle.open(ctx.cwd, current);
-      else if (ctx.hasUI) ctx.ui.notify(current ? "初始化未完成；执行 /ffa init 接续。" : "FFA 未启用；需要时执行 /ffa init。", "info");
+      else if (ctx.hasUI) ctx.ui.notify(current ? "初始化未完成；执行 /ffa init 接续。" : "ffa 未启用；需要时执行 /ffa init。", "info");
     } catch (error) {
-      if (ctx.hasUI) ctx.ui.notify(error instanceof Error ? error.message : "FFA 启动失败。", "error");
+      if (ctx.hasUI) ctx.ui.notify(error instanceof Error ? error.message : "ffa 启动失败。", "error");
       else throw error;
     }
   });
@@ -28,7 +28,7 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
     const role = instance.initialization.snapshot().status === "ready"
       ? await roleText("coordinator", instance.root) : await readFile(join(resourceRoot, "initialization.md"), "utf8");
     instance.check();
-    event.systemPromptOptions.sections.ffa = "FFA 包内资料根目录：" + resourceRoot + "\n" + role;
+    event.systemPromptOptions.sections.ffa = "ffa 包内资料根目录：" + resourceRoot + "\n" + role;
   });
   pi.on("input", () => { lifecycle.active?.revoke(); });
   pi.on("agent_end", () => { lifecycle.active?.revoke(); });
@@ -39,15 +39,15 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
   pi.on("tool_call", async (event, ctx) => {
     const instance = lifecycle.active;
     if (!instance) return;
-    if (instance.sources.blocks(event.toolName)) return { block: true, reason: "此原生 MCP 操作受 FFA 调用约束保护。请通过能力目录和受控入口执行。" };
+    if (instance.providers.blocks(event.toolName)) return { block: true, reason: "此原生 MCP 操作受 ffa 调用约束保护。请通过能力目录和受控入口执行。" };
     if (["write", "edit"].includes(event.toolName) && "path" in event.input && typeof event.input.path === "string") {
       const target = await mutationTarget(resolve(ctx.cwd, event.input.path));
       instance.check();
       const scope = mutationScope(instance.root, target);
-      if (scope === "internal") return { block: true, reason: "内部状态必须通过 FFA 专用操作修改。" };
+      if (scope === "internal") return { block: true, reason: "内部状态必须通过 ffa 专用操作修改。" };
       if (scope === "outside") {
-        if (!await confirmations.ask(ctx, "确认修改工作区外文件", { path: target }, instance.signal(ctx.signal))) {
-          return { block: true, reason: "用户未确认外部文件修改。" };
+        if (!await confirmations.ask(ctx, "确认修改工作区外文件", { path: target, change: event.input }, instance.signal(ctx.signal))) {
+          return { block: true, reason: "用户未确认文件修改。" };
         }
         instance.check();
       }

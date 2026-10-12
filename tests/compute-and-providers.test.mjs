@@ -3,21 +3,21 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSource, sourceData } from "../dist/services/source-config.js";
+import { parseProvider, providerData } from "../dist/services/provider-config.js";
 import { runCommand } from "../dist/integrations/process.js";
 import { runPython, ownerParts } from "../dist/services/research-service.js";
 
 const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [{
-  name: "print", description: "Print a literal argument", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" },
+  name: "print", description: "Print a literal argument",
   inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
   argv: ["%s", { parameter: "text" }]
 }] };
 test("CLI contracts require explicit binding and credential references", () => {
-  assert.deepEqual(sourceData(parseSource(cli)), cli);
-  assert.throws(() => parseSource({ ...cli, env: { SECRET: "literal-secret" } }));
-  assert.throws(() => parseSource({ ...cli, command: "printf" }));
-  assert.throws(() => parseSource({ ...cli, operations: [{ ...cli.operations[0], argv: [] }] }));
-  assert.throws(() => parseSource({ ...cli, operations: [{ ...cli.operations[0], effect: "change", assessment: "understood", analysis: { purpose: "Check controlled execution", basis: "Local CLI contract", consequences: "Requires review", related: [], impacts: ["orders"], execution: "independent" } }] }));
+  assert.deepEqual(providerData(parseProvider(cli)), cli);
+  assert.throws(() => parseProvider({ ...cli, env: { SECRET: "literal-secret" } }));
+  assert.throws(() => parseProvider({ ...cli, command: "printf" }));
+  assert.throws(() => parseProvider({ ...cli, operations: [{ ...cli.operations[0], argv: [] }] }));
+  assert.throws(() => parseProvider({ ...cli, operations: [{ ...cli.operations[0], unknownField: true }] }));
 });
 test("real process arguments do not interpret shell metacharacters", async () => {
   const literal = "$(echo unsafe); & | >";

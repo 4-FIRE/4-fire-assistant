@@ -4,11 +4,6 @@ export class Operation {
   declare name: string;
   declare description: string;
   declare inputSchema: Params;
-  declare effect: "observe" | "change" | "unresolved";
-  declare assessment: "unassessed" | "uncertain" | "understood";
-  declare analysis?: { purpose: string; basis: string; consequences: string; related: string[];
-    impacts: string[]; execution: "confirmation" | "independent" };
-  declare blocked?: string;
   declare available?: boolean;
   declare native?: Params;
   declare argv?: (string | { parameter: string } | { json: true })[];
@@ -16,7 +11,7 @@ export class Operation {
   declare outcomes?: { accepted: Params; rejected: Params };
   constructor(value: Operation) { Object.assign(this, value); }
 }
-export class Source {
+export class Provider {
   declare id: string;
   declare kind: "cli" | "mcp";
   declare command?: string;
@@ -27,7 +22,7 @@ export class Source {
   declare coverage?: { basis: string; limitations: string[] };
   declare discovery?: { status: "complete" | "stale" | "failed"; at: string; scope: string };
   declare operations: Operation[];
-  constructor(value: Source) {
+  constructor(value: Provider) {
     Object.assign(this, value);
     this.operations = value.operations.map(operation => new Operation(operation));
   }

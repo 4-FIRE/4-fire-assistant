@@ -13,7 +13,7 @@ module.exports = {
     { name: "services-use-host-capabilities", severity: "error", from: { path: "^src/services/" },
       to: { path: "^src/integrations/", pathNot: "^src/integrations/process\\.ts$" } },
     { name: "api-does-not-access-storage", severity: "error", from: { path: "^src/tools/|^src/extension/command\\.ts$" },
-      to: { path: "^src/storage/|^src/integrations/(?:private-mcp|cli-source|source-connections|process)\\.ts$" } },
+      to: { path: "^src/storage/|^src/integrations/(?:private-mcp|cli-provider|provider-connections|process)\\.ts$" } },
     { name: "integrations-do-not-run-services", severity: "error", from: { path: "^src/integrations/" },
       to: { path: "^src/services/", preCompilationOnly: false } },
     { name: "storage-does-not-decide-business", severity: "error", from: { path: "^src/storage/" },

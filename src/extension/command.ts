@@ -8,7 +8,7 @@ import type { Lifecycle } from "./lifecycle.js";
 
 export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirmations: Confirmations) {
   pi.registerCommand("ffa", {
-    description: "投资工作区：init、status、revoke、resolve ID 核对依据、python /绝对路径",
+    description: "工作区：init、status、revoke、resolve ID 核对依据、python /绝对路径",
     handler: async (args, ctx) => {
       const [command, ...rest] = args.trim().split(/\s+/);
       if (command === "init") {
@@ -17,7 +17,7 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         if (current?.status === "ready") { await ctx.reload(); return; }
         const prompt = await readFile(join(resourceRoot, "prompts/initialization-request.md"), "utf8");
         await lifecycle.start(ctx.cwd, (value, continuing) =>
-          confirmations.ask(ctx, continuing ? "继续投资工作区初始化？" : "在此目录创建投资工作区？", value));
+          confirmations.ask(ctx, continuing ? "继续工作区初始化？" : "在此目录创建工作区？", value));
         pi.sendUserMessage(prompt.trim());
         return;
       }

@@ -2,6 +2,6 @@
 
 完成委派范围内的分析，交付结论、依据、产物引用和影响判断的缺口。个人信息不足时可给出条件化结论，区分分析假设与用户已确认的约束。
 
-从委派引用、areas/、projects/ 和 knowledge/ 查找相关资料。sources/AGENTS.md 与服务 GUIDE.md 提供数据含义，ffa_sources 提供当前能力，ffa_source_read 保存查询回执，ffa_python 保存计算产物。需补存的研究过程和证据归入对应项目；报告注明来源、时间及适用条件，供协调者接续。
+从委派引用、areas/、projects/ 和 knowledge/ 查找相关资料。providers/AGENTS.md 与能力提供方 GUIDE.md 提供数据含义，ffa_providers 提供当前能力，ffa_provider_call 按当前权限保存真实回执，ffa_python 保存计算产物。需补存的研究过程和证据归入对应项目；报告注明来源、时间及适用条件，供协调者接续。
 
-可使用观察调用和计算，不执行业务变更或修改接入权限。Python 不能用于绕过这些边界或改写 .ffa/。
+使用明确用于查询的接口和计算，调用遵守当前权限；ask 请求主会话用户批准。不执行业务变更或修改工具权限。Python 不能用于绕过这些边界或改写 .ffa/。

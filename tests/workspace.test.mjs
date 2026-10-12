@@ -17,13 +17,14 @@ test("inspection is read-only; explicit initialization persists pending without 
   assert.equal(await state(root), undefined);
   assert.deepEqual(await readdir(root), ["AGENTS.md"]);
   assert.equal((await begin(root)).status, "pending");
+  assert.equal((await state(root)).format, "ffa-pi/1");
   await prepareDirectories(root);
   assert.deepEqual(await begin(root), await state(root));
   assert.equal(await readFile(join(root, "AGENTS.md"), "utf8"), "User-owned instructions");
   await assert.rejects(documentsReady(root, ["market"]));
-  await mkdir(join(root, "sources/market"));
-  await writeFile(join(root, "sources/AGENTS.md"), "Service index");
-  await writeFile(join(root, "sources/market/GUIDE.md"), "Native API guide");
+  await mkdir(join(root, "providers/market"));
+  await writeFile(join(root, "providers/AGENTS.md"), "Provider index");
+  await writeFile(join(root, "providers/market/GUIDE.md"), "Native API guide");
   await documentsReady(root, ["market"]);
   await finish(root, "market");
   assert.equal((await state(root)).status, "ready");
@@ -40,7 +41,7 @@ test("old and damaged state is rejected without being replaced", async t => {
 test("unsupported Pi workspace format is rejected without rewriting state", async t => {
   const root = await directory(t);
   await mkdir(join(root, ".ffa"));
-  const path = join(root, ".ffa/workspace.json"), value = JSON.stringify({ format: "ffa-pi/1", status: "ready", market: "local" });
+  const path = join(root, ".ffa/workspace.json"), value = JSON.stringify({ format: "ffa-pi/3", status: "ready", market: "local" });
   await writeFile(path, value);
   await assert.rejects(state(root));
   await assert.rejects(begin(root));

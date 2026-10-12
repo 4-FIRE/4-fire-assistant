@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { requireThat } from "../common/validation.js";
 import { Scope } from "../model/execution-intent.js";
 import type { WorkspaceState } from "../model/workspace.js";
-import type { SourceService } from "../services/source-service.js";
+import type { ProviderRegistry } from "../services/provider-registry.js";
 import type { ExecutionService } from "../services/execution-service.js";
 import type { InitializationService } from "../services/initialization-service.js";
 import type { ResearchService } from "../services/research-service.js";
@@ -18,11 +18,11 @@ export class WorkspaceInstance implements CallAccess {
   readonly #controller = new AbortController();
   #request = randomUUID();
   #closing: Promise<void> | undefined;
-  constructor(readonly root: string, private readonly store: Store, readonly sources: SourceService,
+  constructor(readonly root: string, private readonly store: Store, readonly providers: ProviderRegistry,
     readonly execution: ExecutionService, readonly initialization: InitializationService,
     readonly research: ResearchService, readonly records: RecordService, readonly experts: ExpertService) {}
   check(ready = false) {
-    requireThat(!this.#controller.signal.aborted, "FFA 未启用；请执行 /ffa init。");
+    requireThat(!this.#controller.signal.aborted, "ffa 未启用；请执行 /ffa init。");
     requireThat(!ready || this.initialization.snapshot().status === "ready", "请先完成工作区初始化。");
   }
   signal(signal?: AbortSignal) {
@@ -35,7 +35,7 @@ export class WorkspaceInstance implements CallAccess {
     if (this.#closing) return this.#closing;
     this.revoke(); this.#controller.abort();
     this.#closing = (async () => {
-      try { await this.sources.close(); } finally { this.store.close(); }
+      try { await this.providers.close(); } finally { this.store.close(); }
     })();
     return this.#closing;
   }
@@ -46,7 +46,7 @@ export class Lifecycle {
     private readonly register: (instance: WorkspaceInstance) => void, private readonly hide: () => void) {}
   get active() { return this.#active; }
   get() {
-    requireThat(this.#active, "FFA 未启用；请执行 /ffa init。");
+    requireThat(this.#active, "ffa 未启用；请执行 /ffa init。");
     this.#active.check(); return this.#active;
   }
   inspect(root: string) { return state(root); }

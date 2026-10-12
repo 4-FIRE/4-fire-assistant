@@ -2,7 +2,7 @@ import type { Json, Params } from "../common/json.js";
 
 export class Receipt {
   declare id: string;
-  declare source: string;
+  declare provider: string;
   declare operation: string;
   declare parameters: Params;
   declare binding: string;

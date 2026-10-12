@@ -20,7 +20,7 @@ export class Store {
     privateFile(join(directory, "owner.lock"));
     this.#lock = new DatabaseSync(join(directory, "owner.lock"));
     try { this.#lock.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE"); }
-    catch { this.#lock.close(); throw new Error("另一个 FFA 实例正在使用此工作区。"); }
+    catch { this.#lock.close(); throw new Error("另一个 ffa 实例正在使用此工作区。"); }
     try {
       if (!create && !lstatSync(join(directory, "business.sqlite")).isFile()) throw new Error("交易账本缺失，禁止创建替代账本。");
       privateFile(join(directory, "business.sqlite"));
@@ -31,8 +31,8 @@ export class Store {
             this.#db.prepare("PRAGMA synchronous").get()?.synchronous !== 2) throw new Error("交易存储需要 WAL/FULL。");
         const version = this.#db.prepare("PRAGMA user_version").get()?.user_version;
         if (version === 0 && create && this.#db.prepare("SELECT name FROM sqlite_master WHERE type=\'table\'").all().length === 0) {
-          this.#db.exec("BEGIN IMMEDIATE; CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(kind,id)); PRAGMA user_version=2; COMMIT");
-        } else if (version !== 2) throw new Error("不支持此业务账本格式；不会重建或升级。");
+          this.#db.exec("BEGIN IMMEDIATE; CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(kind,id)); PRAGMA user_version=1; COMMIT");
+        } else if (version !== 1) throw new Error("不支持此业务账本格式；不会重建或升级。");
         if (this.#db.prepare("PRAGMA quick_check").get()?.quick_check !== "ok") throw new Error("账本完整性检查失败。");
         this.#db.prepare("SELECT kind,id,value FROM records LIMIT 0").all();
       } catch (error) { this.#db.close(); throw error; }

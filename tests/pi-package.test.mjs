@@ -25,35 +25,36 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   const names = session.getAllTools().map(tool => tool.name);
   assert.ok(names.includes("ffa_python")); assert.ok(names.includes("ffa_delegate"));
   assert.ok(!names.includes("ffa_finish_initialization"));
-  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["service-connections", "trading"]);
+  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["provider-connections", "trading"]);
   const storeFiles = await readdir(join(root, ".ffa"));
   assert.ok(storeFiles.includes("business.sqlite"));
-  const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_source");
+  const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_provider");
   assert.ok(configure);
-  await assert.rejects(configure.execute("test", { source: { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf",
-    operations: [{ name: "read", description: "Print", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] } }, undefined));
+  await assert.rejects(configure.execute("test", { provider: { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf",
+    operations: [{ name: "read", description: "Print", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] } }, undefined));
 });
 test("real Pi tools save CLI evidence and cannot execute unreviewed operations", async t => {
-  const source = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
-    { name: "echo", description: "Return explicit JSON", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
-    { name: "write", description: "Requires approval", effect: "change", assessment: "understood", analysis: { purpose: "Check controlled execution", basis: "Local CLI contract", consequences: "Requires review", related: [], impacts: ["orders"], execution: "independent" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }],
+  const provider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+    { name: "echo", description: "Return explicit JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
+    { name: "write", description: "Requires approval", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
       outcomes: { accepted: { const: true }, rejected: { const: false } } }
   ] };
-  const { session } = await host(t, "ready", [source]);
+  const { session } = await host(t, "ready", [provider]);
   const tool = name => session.agent.state.tools.find(tool => tool.name === name);
-  const read = await tool("ffa_source_read").execute("read", { source: "local", operation: "echo", parameters: { sample: 42 } }, undefined);
+  const read = await tool("ffa_provider_call").execute("read", { provider: "local", operation: "echo", parameters: { sample: 42 } }, undefined);
   assert.equal(read.details.success, true);
   assert.deepEqual(read.details.data, { sample: 42 });
   const saved = await tool("ffa_record").execute("record", { kind: "receipt", id: read.details.id }, undefined);
   assert.deepEqual(JSON.parse(saved.details.text).parameters, { sample: 42 });
-  await assert.rejects(tool("ffa_source_read").execute("bad", { source: "local", operation: "write", parameters: {} }, undefined));
-  const prepared = await tool("ffa_prepare_change").execute("prepare", { objective: "check approval", source: "local", operation: "write", parameters: {} }, undefined);
+  await assert.rejects(tool("ffa_provider_call").execute("bad", { provider: "local", operation: "write", parameters: {} }, undefined));
+  const prepared = await tool("ffa_prepare_call").execute("prepare", { objective: "check approval", provider: "local", operation: "write", parameters: {} }, undefined);
   assert.equal(prepared.details.state, "prepared");
-  await assert.rejects(tool("ffa_execute_change").execute("execute", { intentId: prepared.details.id }, undefined));
+  await assert.rejects(tool("ffa_execute_call").execute("execute", { intentId: prepared.details.id }, undefined));
   const still = await tool("ffa_record").execute("record", { kind: "intent", id: prepared.details.id }, undefined);
   assert.equal(JSON.parse(still.details.text).attempt, undefined);
-  const blocked = await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "raw", toolName: "mcp__alias__write", input: {} });
+  const blocked = await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "raw", toolName: "mcp__ffa_local__write", input: {} });
   assert.equal(blocked?.block, true);
+  assert.equal(await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "other", toolName: "mcp__alias__write", input: {} }), undefined);
 });
 test("expert resource loader excludes project extensions and exposes only role resources", async t => {
   const root = await mkdtemp(join(tmpdir(), "ffa-expert-"));
@@ -73,9 +74,9 @@ test("expert resource loader excludes project extensions and exposes only role r
   }
 });
 
-const localSource = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
-  { name: "echo", description: "Return JSON", effect: "observe", assessment: "understood", analysis: { purpose: "Read local data", basis: "Local CLI contract", consequences: "No business state change", related: [], impacts: [], execution: "confirmation" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
-  { name: "write", description: "Requires approval", effect: "change", assessment: "understood", analysis: { purpose: "Check controlled execution", basis: "Local CLI contract", consequences: "Requires review", related: [], impacts: ["orders"], execution: "independent" }, inputSchema: { type: "object" }, argv: ["%s", { json: true }],
+const localProvider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+  { name: "echo", description: "Return JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
+  { name: "write", description: "Requires approval", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
     outcomes: { accepted: { const: true }, rejected: { const: false } } }
 ] };
 async function runScript(session, id, code, signal) {
@@ -94,74 +95,97 @@ function scriptValue(result) {
   return JSON.parse(result.content.slice(1).map(part => part.text).join(""));
 }
 
-test("real codemode discovers all active FFA tools and receives structured results", async t => {
-  const { session } = await host(t, "ready", [localSource]);
+test("real codemode discovers all active ffa tools and receives structured results", async t => {
+  const { session } = await host(t, "ready", [localProvider]);
   const codemode = session.agent.state.tools.find(tool => tool.name === "codemode");
   assert.ok(codemode);
   const result = await runScript(session, "discover", `
     const names = ALL_TOOLS.filter(tool => tool.name.startsWith("ffa_")).map(tool => tool.name).sort();
     const namespace = await describeNamespace("ffa");
-    const description = await describeTool("ffa_source_read");
-    const catalog = await tools.ffa_sources({});
-    const receipt = await tools.ffa_source_read({ source: "local", operation: "echo", parameters: { sample: 42 } });
+    const description = await describeTool("ffa_provider_call");
+    const catalog = await tools.ffa_providers({});
+    const receipt = await tools.ffa_provider_call({ provider: "local", operation: "echo", parameters: { sample: 42 } });
     const record = await tools.ffa_record({ kind: "receipt", id: receipt.id });
     const status = await tools.ffa_status({});
     return { names, namespace: namespace.name, described: description !== undefined,
-      catalogType: typeof catalog, source: catalog.sources[0].id, data: receipt.data,
+      catalogType: typeof catalog, provider: catalog.providers[0].id, data: receipt.data,
       saved: JSON.parse(record.text).parameters, state: status.workspace.status };
   `);
   const data = scriptValue(result);
   assert.deepEqual(data.names, session.getCallableToolNames().filter(name => name.startsWith("ffa_")).sort());
-  for (const name of ["ffa_configure_source", "ffa_delegate", "ffa_execute_change"]) assert.ok(data.names.includes(name));
+  for (const name of ["ffa_configure_provider", "ffa_delegate", "ffa_execute_call"]) assert.ok(data.names.includes(name));
   assert.equal(data.namespace, "ffa"); assert.equal(data.described, true);
-  assert.equal(data.catalogType, "object"); assert.equal(data.source, "local");
+  assert.equal(data.catalogType, "object"); assert.equal(data.provider, "local");
   assert.deepEqual(data.data, { sample: 42 }); assert.deepEqual(data.saved, { sample: 42 });
   assert.equal(data.state, "ready");
   assert.ok(result.details.calls.every(call => call.status === "ok"));
 });
 
 test("ordinary changes still require the real Pi confirmation channel through codemode", async t => {
-  const source = structuredClone(localSource);
-  source.operations[1].analysis.impacts = [];
-  source.operations[1].analysis.execution = "confirmation";
-  const { session } = await host(t, "ready", [source]);
+  const provider = structuredClone(localProvider);
+  const { session } = await host(t, "ready", [provider], { default: "ask", tools: { "local/echo": "allow", "local/write": "ask" } });
   const result = await runScript(session, "ordinary-gate", `
-    const prepared = await tools.ffa_prepare_change({ objective: "check confirmation", source: "local", operation: "write", parameters: {} });
-    const outcome = await Promise.allSettled([tools.ffa_execute_change({ intentId: prepared.id })]);
+    const prepared = await tools.ffa_prepare_call({ objective: "check confirmation", provider: "local", operation: "write", parameters: {} });
+    const outcome = await Promise.allSettled([tools.ffa_execute_call({ intentId: prepared.id })]);
     const record = await tools.ffa_record({ kind: "intent", id: prepared.id });
-    return { requirement: prepared.execution, status: outcome[0].status, intent: JSON.parse(record.text) };
+    return { requirement: prepared.permission, status: outcome[0].status, intent: JSON.parse(record.text) };
   `);
   const data = scriptValue(result);
-  assert.equal(data.requirement, "confirmation");
+  assert.equal(data.requirement, "ask");
   assert.equal(data.status, "rejected");
   assert.equal(data.intent.state, "prepared");
   assert.equal(data.intent.attempt, undefined);
 });
 
 test("codemode cannot bypass confirmation or review and retains structured failure data", async t => {
-  const { session, root } = await host(t, "ready", [localSource]);
+  const { session, root } = await host(t, "ready", [localProvider]);
   const result = await runScript(session, "gates", `
-    const prepared = await tools.ffa_prepare_change({ objective: "check review", source: "local", operation: "write", parameters: {} });
+    const prepared = await tools.ffa_prepare_call({ objective: "check review", provider: "local", operation: "write", parameters: {} });
     const calls = await Promise.allSettled([
-      tools.ffa_execute_change({ intentId: prepared.id }),
-      tools.ffa_configure_source({ source: ${JSON.stringify({ ...localSource, id: "other" })} })
+      tools.ffa_execute_call({ intentId: prepared.id }),
+      tools.ffa_configure_provider({ provider: ${JSON.stringify({ ...localProvider, id: "other" })} })
     ]);
     const failed = await tools.ffa_python({ code: "raise ValueError('local test')" });
-    const catalog = await tools.ffa_sources({});
+    const catalog = await tools.ffa_providers({});
     const record = await tools.ffa_record({ kind: "intent", id: prepared.id });
-    return { calls: calls.map(call => call.status), failed, sources: catalog.sources.map(source => source.id), intent: JSON.parse(record.text) };
+    return { calls: calls.map(call => call.status), failed, providers: catalog.providers.map(provider => provider.id), intent: JSON.parse(record.text) };
   `);
   const data = scriptValue(result);
   assert.deepEqual(data.calls, ["rejected", "rejected"]);
-  assert.deepEqual(data.sources, ["local"]);
+  assert.deepEqual(data.providers, ["local"]);
   assert.equal(data.intent.state, "prepared"); assert.equal(data.intent.attempt, undefined);
   assert.equal(data.failed.state, "failed"); assert.equal(typeof data.failed.output, "object");
   assert.ok((await readdir(join(root, data.failed.path))).includes("manifest.json"));
   assert.equal(result.details.calls.filter(call => call.status === "error").length, 3);
 });
 
-test("FFA successful and failed outputs match their declared schemas", async t => {
-  const { session } = await host(t, "ready", [localSource]);
+test("file tools cannot edit program-owned permissions and manual user maintenance remains effective", async t => {
+  const { root, session } = await host(t, "ready", [localProvider]);
+  const before = await readFile(join(root, ".ffa/permissions.json"), "utf8");
+  for (const toolName of ["write", "edit"]) {
+    const decision = await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: toolName, toolName,
+      input: { path: ".ffa/permissions.json" } });
+    assert.equal(decision?.block, true);
+  }
+  const result = await runScript(session, "permissions-edit", `
+    const callable = ALL_TOOLS.some(tool => tool.name === "write");
+    const outcome = await Promise.allSettled([tools.write({ path: ".ffa/permissions.json", content: '{"default":"allow","tools":{}}' })]);
+    return { callable, status: outcome[0].status };
+  `);
+  const data = scriptValue(result);
+  assert.equal(data.callable, true); assert.equal(data.status, "rejected");
+  assert.equal(result.details.calls.length, 1); assert.equal(result.details.calls[0].status, "error");
+  assert.equal(await readFile(join(root, ".ffa/permissions.json"), "utf8"), before);
+  await writeFile(join(root, ".ffa/permissions.json"), JSON.stringify({ default: "deny", tools: {} }));
+  const catalog = await session.agent.state.tools.find(tool => tool.name === "ffa_providers").execute("permissions", {});
+  assert.ok(catalog.structuredContent.providers[0].operations.every(op => op.permission === "deny"));
+  await assert.rejects(session.agent.state.tools.find(tool => tool.name === "ffa_provider_call").execute("denied", {
+    provider: "local", operation: "echo", parameters: {},
+  }));
+});
+
+test("ffa successful and failed outputs match their declared schemas", async t => {
+  const { session } = await host(t, "ready", [localProvider]);
   const execute = async (name, args, signal) => {
     const tool = session.agent.state.tools.find(tool => tool.name === name);
     const result = await tool.execute(name, args, signal);
@@ -171,12 +195,12 @@ test("FFA successful and failed outputs match their declared schemas", async t =
     return result;
   };
   await execute("ffa_status", {});
-  await execute("ffa_sources", {});
-  const single = await execute("ffa_sources", { source: "local", operation: "echo" });
-  assert.equal(single.structuredContent.sources[0].operations.length, 1);
-  const receipt = await execute("ffa_source_read", { source: "local", operation: "echo", parameters: { value: 1 } });
+  await execute("ffa_providers", {});
+  const single = await execute("ffa_providers", { provider: "local", operation: "echo" });
+  assert.equal(single.structuredContent.providers[0].operations.length, 1);
+  const receipt = await execute("ffa_provider_call", { provider: "local", operation: "echo", parameters: { value: 1 } });
   await execute("ffa_record", { kind: "receipt", id: receipt.structuredContent.id });
-  await execute("ffa_prepare_change", { objective: "schema", source: "local", operation: "write", parameters: {} });
+  await execute("ffa_prepare_call", { objective: "schema", provider: "local", operation: "write", parameters: {} });
   await execute("ffa_python", { code: "print('42')" });
   const failed = await execute("ffa_python", { code: "raise ValueError('local test')" });
   assert.equal(failed.isError, true);

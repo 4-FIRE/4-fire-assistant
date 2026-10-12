@@ -3,7 +3,6 @@ import type { Params } from "../common/json.js";
 import type { ExpertRef, ExpertAnswer } from "../model/expert.js";
 import type { Receipt } from "../model/receipt.js";
 import type { Scope } from "../model/execution-intent.js";
-import type { SourceService } from "./source-service.js";
 import type { ExecutionService } from "./execution-service.js";
 
 export interface ReviewDecision { approved: boolean; evidenceIds: string[]; note: string }
@@ -13,13 +12,13 @@ export interface ExpertTask {
   goal: string;
   previous: ExpertRef | undefined;
   remember(ref: ExpertRef): void;
-  read(source: string, operation: string, parameters: Params, signal?: AbortSignal): Promise<Receipt>;
+  call(scope: Scope, provider: string, operation: string, parameters: Params, confirm: (value: unknown) => Promise<boolean>, signal?: AbortSignal): Promise<Receipt>;
   submitReview: ((decision: ReviewDecision) => void) | undefined;
 }
 export type ExpertRun = (task: ExpertTask) => Promise<ExpertAnswer>;
 
 export class ExpertService {
-  constructor(private readonly sources: SourceService, private readonly execution: ExecutionService) {}
+  constructor(private readonly execution: ExecutionService) {}
   prepare(input: Delegation, refs: ExpertRef[], scope: Scope, signal: AbortSignal): ExpertTask {
     signal.throwIfAborted();
     const generation = this.execution.generation;
@@ -49,10 +48,13 @@ export class ExpertService {
         requireThat(generation === this.execution.generation, "专家调用所属请求已失效。");
         reviewerId = ref.id;
       },
-      read: async (source, operation, parameters, callSignal) => {
+      call: async (callScope, provider, operation, parameters, confirm, callSignal) => {
+        requireThat(callScope.session === scope.session && callScope.request === scope.request, "专家调用不属于当前请求。");
         signal.throwIfAborted();
+        requireThat(generation === this.execution.generation, "专家调用所属请求已失效。");
         const cancel = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
-        const receipt = await this.sources.read(source, operation, parameters, cancel);
+        const receipt = await this.execution.call(scope, provider, operation, parameters, confirm, cancel);
+        requireThat(generation === this.execution.generation, "专家调用所属请求已失效。");
         evidence.add(receipt.id); return receipt;
       },
       submitReview,

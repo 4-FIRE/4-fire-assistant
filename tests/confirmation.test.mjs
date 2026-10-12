@@ -17,8 +17,8 @@ function dialog(text, signal) {
 }
 
 test("large confirmation keeps actions fixed and every wrapped detail line reachable", () => {
-  const source = { operations: Array.from({ length: 200 }, (_, index) => ({ name: `operation_${index}`, description: "行情中文🙂", inputSchema: { type: "object", properties: { symbol: { type: "string" } } } })) };
-  const text = JSON.stringify(source, null, 2);
+  const provider = { operations: Array.from({ length: 200 }, (_, index) => ({ name: `operation_${index}`, description: "行情中文🙂", inputSchema: { type: "object", properties: { symbol: { type: "string" } } } })) };
+  const text = JSON.stringify(provider, null, 2);
   const { component, decisions, resize } = dialog(text);
   for (const [width, height] of [[80, 24], [24, 15], [40, 18], [120, 30]]) {
     resize(height);
@@ -114,7 +114,7 @@ test("abort, escape, and a terminal too small cannot authorize", () => {
   assert.deepEqual(dialog("{}", controller.signal).decisions, [false]);
 });
 
-test("source summary can switch to complete raw data without hiding actions or keeping approval selected", () => {
+test("provider summary can switch to complete raw data without hiding actions or keeping approval selected", () => {
   const value = { operations: Array.from({ length: 40 }, (_, index) => ({ name: `op_${index}`, inputSchema: { type: "object" } })) };
   const raw = JSON.stringify(value, null, 2);
   const summary = "op_0()\nop_1()";

@@ -1,14 +1,14 @@
-import type { Source } from "../model/source.js";
+import type { Provider } from "../model/provider.js";
 import { json, object, type Json } from "../common/json.js";
 import { requireThat } from "../common/validation.js";
 
 export function expand(value: string): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
-    const found = process.env[name]; requireThat(found !== undefined, "来源所需环境变量未设置。"); return found;
+    const found = process.env[name]; requireThat(found !== undefined, "能力提供方所需环境变量未设置。"); return found;
   });
 }
-export function environment(source: Source) {
-  return Object.fromEntries(Object.entries(source.env ?? {}).map(([key, value]) => [key, expand(value)]));
+export function environment(provider: Provider) {
+  return Object.fromEntries(Object.entries(provider.env ?? {}).map(([key, value]) => [key, expand(value)]));
 }
 export function payload(value: unknown): Json {
   if (object(value)) {

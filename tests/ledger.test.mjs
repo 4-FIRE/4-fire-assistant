@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Store } from "../dist/storage/store.js";
 import { Ledger } from "../dist/services/execution-ledger.js";
-import { classify } from "../dist/services/source-service.js";
+import { classify } from "../dist/services/provider-registry.js";
 
 async function fixture(t) {
   const path = await mkdtemp(join(tmpdir(), "ffa-ledger-"));
@@ -14,8 +14,8 @@ async function fixture(t) {
   return { path, store, ledger: new Ledger(store) };
 }
 const scope = { session: "pi-session", request: "request" };
-function prepare(ledger, args = { quantity: 1 }) { return ledger.prepare(scope, "objective", "broker", "submit", args, "binding", "independent"); }
-test("one intent cannot be dispatched twice; unresolved attempts block all new work", async t => {
+function prepare(ledger, args = { quantity: 1 }) { return ledger.prepare(scope, "objective", "broker", "submit", args, "binding", "review"); }
+test("one intent cannot be dispatched twice; unknown attempts block review calls", async t => {
   const { ledger } = await fixture(t);
   const first = prepare(ledger);
   assert.equal(prepare(ledger).id, first.id);
@@ -35,12 +35,12 @@ test("one intent cannot be dispatched twice; unresolved attempts block all new w
 test("changed connection bindings replace only unattempted preparation and deduplicate the new intent", async t => {
   const { ledger } = await fixture(t);
   const old = prepare(ledger);
-  const fresh = ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "independent");
+  const fresh = ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "review");
   assert.notEqual(fresh.id, old.id);
   assert.equal(ledger.get(old.id).state, "declined");
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "independent").id, fresh.id);
+  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "review").id, fresh.id);
   ledger.start(fresh.id);
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "another-binding", "independent").id, fresh.id);
+  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "another-binding", "review").id, fresh.id);
 });
 test("reopen changes incomplete attempts to unknown, independent of chat branches", async t => {
   const { path, store, ledger } = await fixture(t);
@@ -49,7 +49,7 @@ test("reopen changes incomplete attempts to unknown, independent of chat branche
   try {
     const other = new Ledger(reopened); other.recover();
     assert.equal(other.get(intent.id).state, "unknown");
-    assert.throws(() => other.prepare({ session: "fork", request: "another" }, "new", "broker", "submit", { quantity: 1 }, "new-binding", "independent"));
+    assert.throws(() => other.prepare({ session: "fork", request: "another" }, "new", "broker", "submit", { quantity: 1 }, "new-binding", "review"));
     assert.throws(() => other.start(intent.id));
   } finally { reopened.close(); }
 });
@@ -66,19 +66,22 @@ test("ready workspaces must not silently replace a missing ledger", async t => {
   t.after(() => rm(path, { recursive: true, force: true }));
   assert.throws(() => new Store(path, false));
   const store = new Store(path); store.close();
+  const db = new DatabaseSync(join(path, "business.sqlite"));
+  try { assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1); }
+  finally { db.close(); }
 });
 test("unsupported ledger versions are rejected without migrating or deleting records", async t => {
   const path = await mkdtemp(join(tmpdir(), "ffa-unsupported-ledger-"));
   t.after(() => rm(path, { recursive: true, force: true }));
   const file = join(path, "business.sqlite"), db = new DatabaseSync(file);
   const value = JSON.stringify({ state: "unknown", externalId: "local-reference" });
-  db.exec("CREATE TABLE records (kind TEXT, id TEXT, value TEXT); PRAGMA user_version=1");
+  db.exec("CREATE TABLE records (kind TEXT, id TEXT, value TEXT); PRAGMA user_version=3");
   db.prepare("INSERT INTO records VALUES (?,?,?)").run("intent", "history", value);
   db.close();
   assert.throws(() => new Store(path, false));
   const preserved = new DatabaseSync(file);
   try {
-    assert.equal(preserved.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(preserved.prepare("PRAGMA user_version").get().user_version, 3);
     assert.equal(preserved.prepare("SELECT value FROM records WHERE id=?").get("history").value, value);
   } finally { preserved.close(); }
 });
