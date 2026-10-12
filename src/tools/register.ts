@@ -12,14 +12,11 @@ import type { Confirmations } from "../ui/confirmation.js";
 import type { CallAccess } from "./access.js";
 import { providersTool } from "./providers.js";
 import { providerCallTool } from "./provider-call.js";
-import { recordTool } from "./record.js";
 import { configureProviderTool } from "./configure-provider.js";
 import { discoverProviderTool } from "./discover-provider.js";
 import { finishInitializationTool } from "./finish-initialization.js";
 import { pythonTool } from "./python.js";
 import { statusTool } from "./status.js";
-import { prepareCallTool } from "./prepare-call.js";
-import { executeCallTool } from "./execute-call.js";
 import { delegateTool, type BindExpertRun } from "./delegate.js";
 
 export interface ToolServices {
@@ -28,13 +25,13 @@ export interface ToolServices {
 }
 export function mainTools(services: ToolServices, access: CallAccess, confirmations: Confirmations, run: BindExpertRun): ToolDefinition[] {
   const { providers, execution, initialization, research, records, experts } = services;
-  const tools: ToolDefinition[] = [providersTool(providers, access), providerCallTool(execution, access, confirmations),
-    recordTool(records, access), configureProviderTool(providers, access, confirmations), discoverProviderTool(providers, access)];
+  const tools: ToolDefinition[] = [providersTool(providers, access), providerCallTool(execution, records, access, confirmations),
+    configureProviderTool(providers, access, confirmations), discoverProviderTool(providers, access)];
   if (initialization.snapshot().status === "pending") {
     tools.push(finishInitializationTool(initialization, access, confirmations));
   } else {
     tools.push(pythonTool(research, access), statusTool(initialization, execution, providers, access),
-      prepareCallTool(execution, access), executeCallTool(execution, access, confirmations), delegateTool(experts, access, run));
+      delegateTool(experts, access, run));
   }
   return tools;
 }

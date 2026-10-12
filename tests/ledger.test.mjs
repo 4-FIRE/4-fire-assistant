@@ -13,43 +13,40 @@ async function fixture(t) {
   const store = new Store(path); t.after(() => { store.close(); return rm(path, { recursive: true, force: true }); });
   return { path, store, ledger: new Ledger(store) };
 }
-const scope = { session: "pi-session", request: "request" };
-function prepare(ledger, args = { quantity: 1 }) { return ledger.prepare(scope, "objective", "broker", "submit", args, "binding", "review"); }
-test("one intent cannot be dispatched twice; unknown attempts block review calls", async t => {
+const scope = { session: "pi-session" };
+function create(ledger, args = { quantity: 1 }) { return ledger.create(scope, "broker", "submit", args, "binding", "review"); }
+test("one record sends once; identical and unknown calls do not block new requests", async t => {
   const { ledger } = await fixture(t);
-  const first = prepare(ledger);
-  assert.equal(prepare(ledger).id, first.id);
-  const second = prepare(ledger, { quantity: 2 });
+  const first = create(ledger);
+  assert.notEqual(create(ledger).id, first.id);
+  const second = create(ledger, { quantity: 2 });
   ledger.start(first.id);
   assert.throws(() => ledger.start(first.id));
-  assert.throws(() => ledger.start(second.id));
-  assert.throws(() => prepare(ledger, { quantity: 3 }));
+  assert.equal(ledger.start(second.id).state, "dispatched");
+  assert.equal(create(ledger, { quantity: 3 }).state, "pending");
   assert.throws(() => ledger.resolve(first.id, "Not yet unknown"));
   ledger.unknown(first.id);
   assert.throws(() => ledger.resolve(first.id, " "));
   ledger.resolve(first.id, "Checked external order identity and disposition");
   assert.throws(() => ledger.start(first.id));
   assert.equal(ledger.get(first.id).state, "closed");
-  assert.equal(ledger.start(second.id).state, "dispatched");
+  assert.throws(() => ledger.start(second.id));
 });
-test("changed connection bindings replace only unattempted preparation and deduplicate the new intent", async t => {
-  const { ledger } = await fixture(t);
-  const old = prepare(ledger);
-  const fresh = ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "review");
-  assert.notEqual(fresh.id, old.id);
-  assert.equal(ledger.get(old.id).state, "declined");
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "changed-binding", "review").id, fresh.id);
-  ledger.start(fresh.id);
-  assert.equal(ledger.prepare(scope, "objective", "broker", "submit", { quantity: 1 }, "another-binding", "review").id, fresh.id);
+test("declined calls never acquire a sending attempt", async t => {
+  const { ledger } = await fixture(t), intent = create(ledger);
+  assert.equal(ledger.decline(intent.id).state, "declined");
+  assert.throws(() => ledger.start(intent.id));
+  assert.equal(ledger.get(intent.id).attempt, undefined);
 });
 test("reopen changes incomplete attempts to unknown, independent of chat branches", async t => {
   const { path, store, ledger } = await fixture(t);
-  const intent = prepare(ledger); ledger.start(intent.id); store.close();
+  const pending = create(ledger), intent = create(ledger); ledger.start(intent.id); store.close();
   const reopened = new Store(path, false);
   try {
     const other = new Ledger(reopened); other.recover();
     assert.equal(other.get(intent.id).state, "unknown");
-    assert.throws(() => other.prepare({ session: "fork", request: "another" }, "new", "broker", "submit", { quantity: 1 }, "new-binding", "review"));
+    assert.equal(other.get(pending.id).state, "declined");
+    assert.equal(other.create({ session: "fork" }, "broker", "submit", { quantity: 1 }, "new-binding", "review").state, "pending");
     assert.throws(() => other.start(intent.id));
   } finally { reopened.close(); }
 });
@@ -95,11 +92,13 @@ test("only one complete non-conflicting receipt classification is known", () => 
   assert.equal(classify({ success: false, data: { accepted: true } }, op), "unknown");
 });
 test("observations cannot overwrite receipts or authorize resends", async t => {
-  const { ledger } = await fixture(t), intent = prepare(ledger);
+  const { ledger } = await fixture(t), intent = create(ledger);
+  const receipt = { id: "receipt", provider: intent.provider, operation: intent.operation, parameters: intent.parameters,
+    binding: intent.binding, at: intent.createdAt, success: true, data: { status: "received" } };
   ledger.start(intent.id);
-  ledger.observe(intent.id, { success: true, data: { status: "received" } }, "accepted");
+  ledger.observe(intent.id, { success: true, data: receipt.data }, "accepted", receipt);
   assert.equal(ledger.get(intent.id).state, "observed");
-  assert.throws(() => ledger.observe(intent.id, { success: false, data: null }, "unknown"));
+  assert.throws(() => ledger.observe(intent.id, { success: false, data: null }, "unknown", receipt));
   assert.throws(() => ledger.start(intent.id));
   assert.throws(() => ledger.unknown(intent.id));
 });

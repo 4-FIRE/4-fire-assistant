@@ -12,6 +12,6 @@ providers/AGENTS.md 导航到能力提供方 GUIDE.md；手册提供数据含义
 
 ## 执行边界
 
-用 ffa_providers 查看当前权限，能力提供方调用遵守程序的权限检查。allow 直接调用，ask 请求本次批准，review 经 ffa_prepare_call、新的独立复核员和 ffa_execute_call 执行，deny 禁止。交易接入建议 review。结果未知时先核对，不自动重发。
+能力提供方日常调用和记录读取只用 ffa_provider_call。allow 直接发送，ask/review 请求本次批准，deny 禁止。review 调用前按方案组织新的独立复核员，报告交付结论；程序不核验复核完成。交易接入建议 review。结果未知时先核对，不自动重发；未知事项不自动阻塞其他调用。
 
 .ffa/ 由专用工具维护。初始权限建议通过 ffa_configure_provider 提交，由程序校验并请求用户确认。文件工具、Bash 和 Python 不得绕过受控入口。工作区职责补充不扩大执行权限。

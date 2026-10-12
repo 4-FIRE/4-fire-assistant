@@ -23,7 +23,7 @@ export default function ffa(pi: ExtensionAPI) {
     const store = new Store(join(root, ".ffa"), current.status === "pending");
     const connections = new ProviderConnections(root);
     try {
-      const providers = new ProviderRegistry(store, connections, () => execution.revoke(), root);
+      const providers = new ProviderRegistry(store, connections, root);
       const execution = new ExecutionService(providers, store);
       if (current.status === "ready") providers.permissions.read();
       return new WorkspaceInstance(root, store, providers, execution,

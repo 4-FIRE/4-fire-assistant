@@ -1,5 +1,4 @@
 import { realpath } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { requireThat } from "../common/validation.js";
 import { Scope } from "../model/execution-intent.js";
 import type { WorkspaceState } from "../model/workspace.js";
@@ -16,7 +15,7 @@ import type { CallAccess } from "../tools/access.js";
 
 export class WorkspaceInstance implements CallAccess {
   readonly #controller = new AbortController();
-  #request = randomUUID();
+  #work = new AbortController();
   #closing: Promise<void> | undefined;
   constructor(readonly root: string, private readonly store: Store, readonly providers: ProviderRegistry,
     readonly execution: ExecutionService, readonly initialization: InitializationService,
@@ -26,16 +25,20 @@ export class WorkspaceInstance implements CallAccess {
     requireThat(!ready || this.initialization.snapshot().status === "ready", "请先完成工作区初始化。");
   }
   signal(signal?: AbortSignal) {
-    this.check(); return signal ? AbortSignal.any([signal, this.#controller.signal]) : this.#controller.signal;
+    this.check();
+    return AbortSignal.any([this.#controller.signal, this.#work.signal, ...(signal ? [signal] : [])]);
   }
-  scope(session: string) { this.check(); return new Scope(session, this.#request); }
-  newRequest() { this.check(); this.#request = randomUUID(); this.execution.revoke(); }
-  revoke() { this.execution.revoke(); }
+  scope(session: string) { this.check(); return new Scope(session); }
+  cancelWork() { this.#work.abort(); this.#work = new AbortController(); }
   close(): Promise<void> {
     if (this.#closing) return this.#closing;
-    this.revoke(); this.#controller.abort();
+    this.#controller.abort(); this.#work.abort();
     this.#closing = (async () => {
-      try { await this.providers.close(); } finally { this.store.close(); }
+      try {
+        const results = await Promise.allSettled([this.execution.close(), this.providers.close()]);
+        const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+        if (errors.length) throw new AggregateError(errors, "工作区关闭失败。");
+      } finally { this.store.close(); }
     })();
     return this.#closing;
   }

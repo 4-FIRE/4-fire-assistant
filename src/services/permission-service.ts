@@ -11,8 +11,7 @@ const valid = schema({ type: "object", additionalProperties: false, required: ["
 } });
 export class PermissionService {
   readonly #file: PermissionFile;
-  #current: string | undefined;
-  constructor(root: string, private readonly invalidate: () => void) { this.#file = new PermissionFile(root); }
+  constructor(root: string) { this.#file = new PermissionFile(root); }
   read(): Permissions {
     try {
       const value: unknown = JSON.parse(this.#file.read());
@@ -22,12 +21,8 @@ export class PermissionService {
         const [provider, operation] = id.split("/");
         requireThat(operation && id === toolId(provider!, decodeURIComponent(operation)), "工具 ID 必须使用规范编码。");
       }
-      const current = canonical(config);
-      if (this.#current !== undefined && current !== this.#current) this.invalidate();
-      this.#current = current;
       return config;
     } catch {
-      this.invalidate(); this.#current = undefined;
       throw new Error("工具权限不可用；调用已停止，请用户检查权限设置。");
     }
   }
@@ -45,7 +40,7 @@ export class PermissionService {
     try {
       await this.#file.initialize(JSON.stringify({ default: "ask", tools: {} }, null, 2) + "\n"); this.read();
     } catch {
-      this.invalidate(); throw new Error("无法初始化工具权限；接入已停止。");
+      throw new Error("无法初始化工具权限；接入已停止。");
     }
   }
   async addMissing(proposed: Record<string, Permission>, expected: Permissions) {
@@ -56,7 +51,7 @@ export class PermissionService {
       try {
         await this.#file.write(JSON.stringify(config, null, 2) + "\n"); this.read();
       } catch {
-        this.invalidate(); throw new Error("无法保存工具权限；接入已停止。");
+        throw new Error("无法保存工具权限；接入已停止。");
       }
     }
   }

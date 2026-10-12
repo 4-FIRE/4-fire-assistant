@@ -24,22 +24,21 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
   pi.on("before_agent_start", async event => {
     const instance = lifecycle.active;
     if (!instance) return;
-    instance.newRequest();
+    instance.cancelWork();
     const role = instance.initialization.snapshot().status === "ready"
       ? await roleText("coordinator", instance.root) : await readFile(join(resourceRoot, "initialization.md"), "utf8");
     instance.check();
     event.systemPromptOptions.sections.ffa = "ffa 包内资料根目录：" + resourceRoot + "\n" + role;
   });
-  pi.on("input", () => { lifecycle.active?.revoke(); });
-  pi.on("agent_end", () => { lifecycle.active?.revoke(); });
-  pi.on("session_before_switch", () => { lifecycle.active?.revoke(); });
-  pi.on("session_before_fork", () => { lifecycle.active?.revoke(); });
-  pi.on("session_before_tree", () => { lifecycle.active?.revoke(); });
+  pi.on("input", () => { lifecycle.active?.cancelWork(); });
+  pi.on("agent_end", () => { lifecycle.active?.cancelWork(); });
+  pi.on("session_before_switch", () => { lifecycle.active?.cancelWork(); });
+  pi.on("session_before_fork", () => { lifecycle.active?.cancelWork(); });
+  pi.on("session_before_tree", () => { lifecycle.active?.cancelWork(); });
   pi.on("session_shutdown", () => lifecycle.close());
   pi.on("tool_call", async (event, ctx) => {
     const instance = lifecycle.active;
     if (!instance) return;
-    if (instance.providers.blocks(event.toolName)) return { block: true, reason: "此原生 MCP 操作受 ffa 调用约束保护。请通过能力目录和受控入口执行。" };
     if (["write", "edit"].includes(event.toolName) && "path" in event.input && typeof event.input.path === "string") {
       const target = await mutationTarget(resolve(ctx.cwd, event.input.path));
       instance.check();

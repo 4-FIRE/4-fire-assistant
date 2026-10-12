@@ -28,9 +28,9 @@ export class ProviderConnections implements ProviderAccess {
     if (provider.command) { await access(provider.command, constants.X_OK); provider.command = await realpath(provider.command); }
     await this.#private.remove(provider.id); this.#epochs.delete(provider.id);
   }
-  async discover(provider: Provider, signal?: AbortSignal) {
+  async discover(provider: Provider, signal?: AbortSignal, refresh = true) {
     requireThat(!this.#closed && provider.kind === "mcp", "仅 MCP 支持工具协议发现。");
-    return this.#private.discover(provider, signal);
+    return this.#private.discover(provider, signal, refresh);
   }
   async binding(provider: Provider, operation: Operation, signal?: AbortSignal): Promise<string> {
     requireThat(!this.#closed, "能力提供方已关闭。");

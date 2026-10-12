@@ -6,9 +6,9 @@ ffa 使用原生 CLI/MCP 参数。能力目录记录接口事实，程序维护�
 
 ## 接入与发现
 
-MCP 首次用 ffa_configure_provider 确认连接，operations 为 []。随后用 ffa_discover_provider 取得当前凭据可见的全部工具分页；发现不调用业务操作，不修改权限。
+MCP 首次用 ffa_configure_provider 确认连接，operations 为 []。保存连接后自动发现当前凭据可见的全部工具分页，并返回目录。发现不调用业务操作，不修改权限。自动发现失败保留注册，返回 discoveryError；继续整理资料，修复连接后用 ffa_discover_provider 主动发现。
 
-读取原生定义、命令帮助和可信文档，建立完整已知目录。用 ffa_providers 查看当前目录。配置时保留原连接字段、discovery 和完整 operations，不能修改 native、description、inputSchema、available 或 discovery，也不能省略接口。工具输出中的 id、permission 和 signature 是展示字段，不提交到 provider.operations。
+读取原生定义、命令帮助和可信文档，建立完整已知目录。用 ffa_providers 查看已保存目录。提交初始权限只需 provider ID 和 permissions，不重交连接及 operations。修改完整 MCP 配置时仍须保留原生目录，不能改写 native、description、inputSchema、available 或 discovery，也不能省略接口。输出中的 id、permission 和 signature 是展示字段，不提交到 provider.operations。
 
 CLI 无统一发现协议。读取完整命令帮助及文档，建立已知目录。coverage.basis 记录资料依据，coverage.limitations 列出遗漏、权限或文档限制。没有参数绑定的操作先记录为 available=false；缺少资料不要求禁用已有完整绑定的操作。
 
@@ -16,7 +16,7 @@ CLI 无统一发现协议。读取完整命令帮助及文档，建立已知目�
 
 已有用户规则保留，不因接入建议或重新发现而覆盖。需要修改已有权限时，报告当前权限并交由用户处理。
 
-发现范围仅限当前连接和凭据，不证明未公开的接口已覆盖。消失的工具保留为 available=false；重新出现时恢复可用。定义、目录、连接或凭据变化使旧准备与复核失效。发现失败保留旧目录，但停止调用，直到重新发现成功。
+发现范围仅限当前连接和凭据，不证明未公开的接口已覆盖。消失工具保留为 available=false；重新出现时恢复可用。当前连接缓存完整目录，稳定调用不反复发现。重连、工具目录变化通知和主动刷新触发完整发现。批准期间目录、连接或凭据变化则停止本次发送。发现失败保留旧目录，成功发现前不能发送。服务静默改变接口且不通知时，ffa 不能立即发现。
 
 ## 工具权限
 
@@ -35,14 +35,14 @@ ffa_configure_provider 的 permissions 参数示例：
 | --- | --- |
 | allow | 完全访问，直接调用 |
 | ask | 请求用户批准本次调用 |
-| review | 独立复核通过后，再请求用户批准本次调用 |
+| review | 助手事先组织方案独立复核；调用仍请求用户批准，程序不核验复核完成 |
 | deny | 禁止调用 |
 
 工具 ID 为 provider ID 加 `/` 加 encodeURIComponent 编码的操作名。例如 `qmt/submit_order`，名称 `a/b` 对应 `qmt/a%2Fb`。权限只精确匹配，不支持通配符、参数表达式或规则优先级。未设置的工具使用默认权限，初始为 ask。
 
-用 ffa_providers 查看当前权限。程序在调用及实际发送前检查权限；变化撤销未消费的准备和复核。权限不可用时停止调用，不自动放行。
+用 ffa_providers 查看当前权限。程序在调用及实际发送前检查权限；批准期间有效配置变化则停止发送。权限不可用时停止调用，不自动放行。
 
-权限表示用户选择的批准方式，不证明接口是否查询、修改或交易。用户把交易工具设为 allow 后，也会免除复核和批准。保留 review 是交易接入的建议，不是不可修改的隐藏规则。
+权限表示用户选择的批准方式，不证明接口是否查询、修改或交易。用户把交易工具设为 allow 后，不再要求 review 的方案复核或本次批准。review 是方案工作约定，不是逐次调用的程序复核门槛。
 
 ## 能力提供方字段
 
@@ -64,23 +64,31 @@ argv 元素为固定字符串、{"parameter":"参数名"} 或 {"json":true}。pa
 
 MCP 指定绝对 command 与可选 args，或 http/https url。URL 不得含凭据、查询或片段。HTTP 可用 headers，本地进程可用 env。ffa 不管理 OAuth。
 
-ffa MCP 使用私有连接，不向 Pi 暴露原生工具，也不显示在 /mcp。用 ffa_providers 查看目录，用 ffa_discover_provider 刷新。不要在其他 MCP 配置重复暴露同一受控能力提供方。普通 Pi MCP 配置仍由 Pi 管理。
+ffa MCP 使用私有连接，不向 Pi 暴露原生工具，也不显示在 /mcp。用 ffa_providers 查看目录，用 ffa_discover_provider 刷新。用户通过官方 MCP 发起的调用由 Pi 和服务管理；ffa 不拦截、不审批、不记录，也不能把这些调用当作 ffa 已验证或已记录的证据。
 
-更换 MCP 连接时提交空 operations，不提交 discovery。程序保留旧目录为不可用，再重新发现。凭据引用值变化后，旧连接拒绝复用；重新确认配置并发现。发现失败后可重新配置连接，不需改写原生目录。
+更换 MCP 连接时提交空 operations，不提交 discovery。程序保留旧目录为不可用，保存后自动完整发现。凭据引用值变化后，旧连接拒绝复用；重新确认完整配置并发现。发现失败后可重新配置连接，不需改写原生目录。
 
 ## 调用与恢复
 
 ffa_providers 展示所有已知工具、唯一 ID、当前权限及可用状态。指定 provider 和 operation 查看完整原生定义。接入确认默认显示工具 ID 和权限；按 D 查看完整配置。
 
-allow 和 ask 使用 ffa_provider_call，返回真实 receipt id。ask 展示本次工具、连接和完整参数，请求用户批准。大结果用 ffa_record 分页读取。
+日常调用和记录读取只使用 ffa_provider_call。调用输入为 provider、operation、parameters。allow 直接发送；ask/review 展示本次工具、连接和完整参数，请求用户批准；deny 拒绝。
 
-review 使用 ffa_prepare_call，取得 intentId；委派新的 reviewer 独立核查，然后用 ffa_execute_call 请求用户批准并发送。复核通过不替代用户批准。执行返回的意图包含 receiptId，可用 ffa_record 读取回执。显式准备和执行也适用于 allow、ask；allow 不弹出批准窗口。
+review 调用前，助手通过 ffa_delegate 委派新的 reviewer 核查具体方案。goal 提供操作参数、依据和约束；复核可覆盖多个操作，报告交付结论。程序不核验复核完成，复核也不替代用户批准。
 
-专家使用相同权限。ask 通过主会话请求用户批准；review 不作为专家证据调用入口，以免递归复核。专家不能修改权限配置。
+调用返回 intentId、可选 receiptId、permission、state、outcome、success 和 data。大结果提供预览及 truncated=true。读取已有记录使用同一工具，例如：
+
+```json
+{"record":{"kind":"receipt","id":"回执ID","offset":0,"limit":16000}}
+```
+
+kind 为 receipt 或 intent。结果包含 JSON 文本 text 和 nextOffset，非空 nextOffset 用于继续读取。读取不发送业务调用；不要同时提交 record 和调用参数。
+
+专家使用相同权限，ask/review 通过主会话请求用户批准。专家不能修改配置；复核员按角色约定只使用明确的查询接口，不执行业务变更。
 
 所有调用先可靠记录发送尝试。一个意图最多发送一次；新的 ffa_provider_call 是新的显式请求，不自动复用旧结果。脚本失败、取消或未知结果不得触发自动重发。
 
-直接调用结果不明时，错误信息提供 intent ID，用 ffa_record 查看发送记录和已有回执。先核对外部事实，由用户通过 /ffa resolve 结案。未知记录阻止新的 review 调用；allow 和 ask 可用于事实核对，但程序不保证这些工具没有副作用。结案不授权重发。受理不等于成交。
+结果不明时返回 state=unknown、success=false 和 intentId；用同一工具的 record 输入查看发送记录及已有回执。先核对外部事实，由用户通过 /ffa resolve 结案。未知记录不自动阻塞其他调用，也不授权重发。回执保存失败会停止后续发送，错误提供 intent ID，重启后核对账本。受理不等于成交。
 
 同一能力提供方的配置、发现与调用按依赖顺序完成。脚本失败不撤销已发生的副作用。
 

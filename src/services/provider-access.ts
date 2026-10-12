@@ -4,7 +4,7 @@ import type { Observation } from "../model/receipt.js";
 
 export interface ProviderAccess {
   replace(provider: Provider): Promise<void>;
-  discover(provider: Provider, signal?: AbortSignal): Promise<Params[]>;
+  discover(provider: Provider, signal?: AbortSignal, refresh?: boolean): Promise<Params[]>;
   binding(provider: Provider, operation: Operation, signal?: AbortSignal): Promise<string>;
   identity(provider: Provider, native: unknown): string;
   invoke(provider: Provider, operation: Operation, parameters: Params, preview: Params,

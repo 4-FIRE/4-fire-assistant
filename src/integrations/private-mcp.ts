@@ -10,6 +10,12 @@ export class PrivateMcp {
   readonly #permits = new Map<string, { name: string; parameters: Params; enter: () => void; used: boolean }>();
   #closed = false;
   readonly #revisions = new Map<string, number>();
+  readonly #catalogs = new Map<string, Params[]>();
+  private invalidate(id: string) {
+    this.#catalogs.delete(id);
+    this.#revisions.set(id, (this.#revisions.get(id) ?? 0) + 1);
+    this.changed(id);
+  }
   constructor(private readonly root: string, private readonly credentials: (provider: Provider) => string,
     private readonly changed: (id: string) => void) {}
   readonly #credentials = new Map<string, string>();
@@ -20,15 +26,15 @@ export class PrivateMcp {
       requireThat(this.#credentials.get(provider.id) === this.credentials(provider), "凭据引用已变化，请重新配置连接。");
       if (current.connectionState === "connected") return current;
       await current.close(); this.#clients.delete(provider.id); this.#credentials.delete(provider.id);
+      this.invalidate(provider.id);
     }
     requireThat(!this.#closed, "能力提供方已关闭。");
     const connecting = this.#connecting.get(provider.id); if (connecting) return connecting;
     const promise = (async () => {
       const credential = this.credentials(provider);
       const client = new McpClient({ name: "ffa", version: "0.2.0", requestTimeoutMs: 30_000 });
-      client.onNotification("notifications/tools/list_changed", () => {
-        this.#revisions.set(provider.id, (this.#revisions.get(provider.id) ?? 0) + 1); this.changed(provider.id);
-      });
+      client.onNotification("notifications/tools/list_changed", () => this.invalidate(provider.id));
+      client.onClose(() => this.invalidate(provider.id));
       try {
         let transport: McpTransport;
         if (provider.url) transport = new StreamableHttpTransport({ url: new URL(provider.url),
@@ -46,7 +52,7 @@ export class PrivateMcp {
         }
         await client.connect(transport);
         requireThat(!this.#closed && credential === this.credentials(provider), "能力提供方已关闭或凭据在连接期间变化。");
-        this.#credentials.set(provider.id, credential); this.#clients.set(provider.id, client); this.changed(provider.id); return client;
+        this.#credentials.set(provider.id, credential); this.#clients.set(provider.id, client); this.invalidate(provider.id); return client;
       } catch { await client.close(); throw new Error("MCP 连接失败；请检查能力提供方和凭据引用。"); }
     })();
     this.#connecting.set(provider.id, promise);
@@ -61,23 +67,29 @@ export class PrivateMcp {
     permit.enter(); permit.used = true;
   }
 
-  async discover(provider: Provider, signal?: AbortSignal): Promise<Params[]> {
+  async discover(provider: Provider, signal?: AbortSignal, refresh = true): Promise<Params[]> {
+    if (refresh) this.invalidate(provider.id);
     signal?.throwIfAborted();
     const client = await this.client(provider);
     signal?.throwIfAborted();
+    const cached = this.#catalogs.get(provider.id);
+    if (!refresh && cached) return structuredClone(cached);
+    if (!refresh) this.invalidate(provider.id);
     const revision = this.#revisions.get(provider.id);
     const tools = await client.listTools(signal ? { signal } : {});
     signal?.throwIfAborted();
-    requireThat(revision === this.#revisions.get(provider.id), "发现期间工具目录变化，请重新发现。");
-    return tools.map(tool => json(tool) as Params);
+    requireThat(!this.#closed && client.connectionState === "connected" && revision === this.#revisions.get(provider.id), "发现期间连接或工具目录变化，请重新发现。");
+    const catalog = tools.map(tool => json(tool) as Params);
+    this.#catalogs.set(provider.id, catalog);
+    return structuredClone(catalog);
   }
   async definition(provider: Provider, name: string, signal?: AbortSignal) {
-    const tools = await this.discover(provider, signal);
-    const expected = provider.operations.filter(op => op.available !== false).map(op => op.native);
-    const sorted = (values: unknown[]) => [...values].sort((a, b) => canonical(a).localeCompare(canonical(b)));
-    requireThat(expected.every(Boolean) && canonical(sorted(tools)) === canonical(sorted(expected)), "MCP 目录已变化，请重新发现。");
-    const tool = tools.find(tool => tool.name === name);
-    requireThat(tool, "MCP 操作不可用。"); return tool;
+    signal?.throwIfAborted(); await this.client(provider); signal?.throwIfAborted();
+    const tools = this.#catalogs.get(provider.id);
+    requireThat(tools, "当前连接目录已失效，请重新提交调用或主动发现。");
+    const tool = tools.find(tool => tool.name === name), operation = provider.operations.find(op => op.name === name);
+    requireThat(tool && operation?.available !== false && operation?.native && canonical(tool) === canonical(operation.native), "MCP 操作或目录已变化，请重新提交调用。");
+    return structuredClone(tool);
   }
   async invoke(provider: Provider, name: string, parameters: Params, gate: (native: unknown) => void,
     signal?: AbortSignal) {
@@ -96,13 +108,13 @@ export class PrivateMcp {
   }
   async remove(id: string) {
     await this.#connecting.get(id)?.catch(() => undefined);
-    await this.#clients.get(id)?.close(); this.#clients.delete(id); this.#credentials.delete(id);
+    await this.#clients.get(id)?.close(); this.#clients.delete(id); this.#credentials.delete(id); this.invalidate(id);
   }
   async close() {
     this.#closed = true;
     await Promise.allSettled([...this.#connecting.values()]);
     const results = await Promise.allSettled([...this.#clients.values()].map(client => client.close()));
-    this.#clients.clear();
+    this.#clients.clear(); this.#catalogs.clear();
     const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
     if (errors.length) throw new AggregateError(errors, "能力提供方 MCP 连接关闭失败。");
   }

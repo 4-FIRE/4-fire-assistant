@@ -8,7 +8,7 @@ import type { Lifecycle } from "./lifecycle.js";
 
 export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirmations: Confirmations) {
   pi.registerCommand("ffa", {
-    description: "工作区：init、status、revoke、resolve ID 核对依据、python /绝对路径",
+    description: "工作区：init、status、resolve ID 核对依据、python /绝对路径",
     handler: async (args, ctx) => {
       const [command, ...rest] = args.trim().split(/\s+/);
       if (command === "init") {
@@ -26,7 +26,6 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         ctx.ui.notify(JSON.stringify({ state: current ?? "inactive", unresolved: lifecycle.active?.execution.unsettled() ?? [] }, null, 2), "info"); return;
       }
       const instance = lifecycle.get();
-      if (command === "revoke") { instance.revoke(); ctx.ui.notify("未消费许可已撤销。", "info"); return; }
       if (command === "resolve") {
         await ctx.waitForIdle(); instance.check();
         const id = rest.shift(), note = rest.join(" "); requireThat(id && note, "用法：/ffa resolve ID 核对依据");
@@ -39,7 +38,7 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         await instance.research.configure(rest.join(" "), value => confirmations.ask(ctx, "确认共享 Python 环境", value, cancel), cancel);
         return;
       }
-      ctx.ui.notify("用法：/ffa init | status | revoke | resolve ID 核对依据 | python /绝对路径", "info");
+      ctx.ui.notify("用法：/ffa init | status | resolve ID 核对依据 | python /绝对路径", "info");
     },
   });
 }
