@@ -1,12 +1,42 @@
-import type { Usage } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import { realpath } from "node:fs/promises";
 import { dirname, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager,
-  type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+  type ExtensionContext, type ModelRegistry, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { requireThat } from "../common/validation.js";
 import { ExpertRef } from "../model/expert.js";
 import { expertLoader } from "./expert-resources.js";
+
+// The child must use host authentication for SDK preflight and request paths.
+// OAuth-only providers cannot resolve a copied runtime API-key credential.
+export async function expertModelRuntime(registry: ModelRegistry, model: Model<Api>) {
+  const provider = registry.getProvider(model.provider);
+  requireThat(provider, "当前模型的提供方不可用。");
+  const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(),
+    modelsPath: null, refreshOnCreate: false });
+  runtime.registerNativeProvider({ ...provider,
+    auth: { apiKey: { name: "Pi host authentication",
+      async check({ signal }) {
+        signal.throwIfAborted();
+        if (!registry.hasConfiguredAuth(model) && !await registry.getProviderAuth(model.provider)) return undefined;
+        return { type: registry.isUsingOAuth(model) ? "oauth" : "api_key", source: "Pi host" };
+      },
+      async resolve({ signal }) {
+        signal.throwIfAborted();
+        if (!registry.hasConfiguredAuth(model) && !await registry.getProviderAuth(model.provider)) return undefined;
+        const auth = await registry.getApiKeyAndHeaders(model);
+        requireThat(auth.ok, auth.ok ? "" : auth.error);
+        return { auth: { ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
+          ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
+          ...(auth.baseUrl !== undefined ? { baseUrl: auth.baseUrl } : {}) },
+          ...(auth.env !== undefined ? { env: auth.env } : {}), source: "Pi host" };
+      } } },
+    stream: (selected, context, options) => provider.stream(selected, context, options),
+    streamSimple: (selected, context, options) => registry.streamSimple(selected, context, options),
+  });
+  return runtime;
+}
 
 export class PiExperts {
   readonly #busy = new Set<string>();
@@ -22,19 +52,11 @@ export class PiExperts {
     const ref = previous ?? new ExpertRef({ id: randomUUID(), role, file: manager.getSessionFile()! });
     requireThat(!this.#busy.has(ref.id), "专家正在处理另一请求。"); this.#busy.add(ref.id);
     try {
-      const runtime = await ModelRuntime.create();
-      for (const id of ctx.modelRegistry.getRegisteredProviderIds()) {
-        const native = ctx.modelRegistry.getRegisteredNativeProvider(id), config = ctx.modelRegistry.getRegisteredProviderConfig(id);
-        if (native) runtime.registerNativeProvider(native); else if (config) runtime.registerProvider(id, config);
-      }
-      const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
-      if (auth.ok && auth.apiKey) await runtime.setRuntimeApiKey(ctx.model.provider, auth.apiKey);
+      const runtime = await expertModelRuntime(ctx.modelRegistry, ctx.model);
       const { session } = await createAgentSession({ cwd: ctx.cwd, model: ctx.model, modelRuntime: runtime,
         ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}), sessionManager: manager,
         settingsManager: SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 2 } }),
         resourceLoader: await expertLoader(ctx.cwd, role), tools: ["read", "grep", "find", "ls", ...tools.map(t => t.name)], customTools: tools });
-      // Use the dispatching host's provider and auth resolution, including extension providers.
-      session.agent.streamFunction = (model, context, options) => ctx.modelRegistry.streamSimple(model, context, options);
       const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
       const unsubscribe = session.subscribe(event => {

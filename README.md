@@ -71,6 +71,8 @@ RPC 使用 Pi 原生确认请求，标题与完整详情分开传送；布局由
 - `ffa_configure_provider`、`ffa_discover_provider`、`ffa_finish_initialization`：配置确认、主动刷新与初始化完成。
 - `ffa_python`、`ffa_delegate`：可追溯计算与方案层面的专家协作。
 
+`ffa_delegate` 复用发起委派的主会话模型和认证，不需要单独登录专家。更新本地源码包后执行 `/reload` 加载修改。若认证报错，先确认主会话的同一模型是否可用，不要仅因专家报错就重新登录。独立复核失败时，不把失败当作复核通过，也不自动提交订单。
+
 `ffa_providers` 展示完整目录、工具唯一 ID、当前权限及可用状态。指定 `provider` 和 `operation` 查看原生定义。
 
 外部能力统一称为 provider（能力提供方）；`src/services/` 仍表示业务逻辑层。工具参数使用 `provider`，目录结果使用 `providers`，手册保存在 `providers/`，权限保存在 `.ffa/permissions.json`。
