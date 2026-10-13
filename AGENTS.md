@@ -4,7 +4,7 @@
 
 ffa is a workspace-scoped Pi extension package, not a standalone CLI.
 
-- `src/index.ts`: dependency assembly and registration.
+- `src/ffa.ts`: dependency assembly and registration.
 - `src/tools/`: complete tool contracts, execution adapters, and explicit tool lists.
 - `src/services/`: business rules, state changes, and operation order.
 - `src/model/`: data-only business classes; no business behavior or Pi types.

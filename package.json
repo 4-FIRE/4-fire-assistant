@@ -1,6 +1,6 @@
 {
   "name": "4-fire-assistant",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Workspace-scoped investment tools and skills for Pi",
   "type": "module",
@@ -9,7 +9,7 @@
   ],
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./src/ffa.ts"
     ],
     "skills": [],
     "prompts": [],
