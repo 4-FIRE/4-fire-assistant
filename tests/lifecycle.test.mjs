@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { host } from "./helpers/pi-host.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { assertExpertBranch } from "../dist/integrations/expert-tools.js";
+import { assertAgentBranch } from "../dist/integrations/agent-tools.js";
 
 const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
   { name: "echo", description: "Read JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
@@ -62,16 +62,16 @@ test("source-loaded Python tools retain package library access after module move
   assert.equal(JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")).state, "completed");
 });
 
-test("expert branch checks permit normal appends but reject navigation away from the dispatching ancestor", () => {
+test("agent branch checks permit normal appends but reject navigation away from the dispatching ancestor", () => {
   const manager = SessionManager.inMemory();
   const root = manager.appendCustomEntry("local-root", {});
   const anchor = manager.appendCustomEntry("local-dispatch", {}), sessionId = manager.getSessionId();
-  manager.appendCustomEntry("ffa.expert", { id: "first-reference" });
-  assert.doesNotThrow(() => assertExpertBranch(manager, sessionId, anchor));
-  manager.appendCustomEntry("ffa.expert", { id: "second-reference" });
-  assert.doesNotThrow(() => assertExpertBranch(manager, sessionId, anchor));
+  manager.appendCustomEntry("local-progress", {});
+  assert.doesNotThrow(() => assertAgentBranch(manager, sessionId, anchor));
+  manager.appendCustomEntry("local-progress", {});
+  assert.doesNotThrow(() => assertAgentBranch(manager, sessionId, anchor));
   manager.branch(root);
   manager.appendCustomEntry("other-branch", {});
-  assert.throws(() => assertExpertBranch(manager, sessionId, anchor));
-  assert.throws(() => assertExpertBranch(SessionManager.inMemory(), sessionId, null));
+  assert.throws(() => assertAgentBranch(manager, sessionId, anchor));
+  assert.throws(() => assertAgentBranch(SessionManager.inMemory(), sessionId, null));
 });

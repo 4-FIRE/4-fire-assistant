@@ -7,7 +7,9 @@ import type { ExecutionService } from "../services/execution-service.js";
 import type { InitializationService } from "../services/initialization-service.js";
 import type { ResearchService } from "../services/research-service.js";
 import type { RecordService } from "../services/record-service.js";
-import type { ExpertService } from "../services/expert-service.js";
+import type { AgentService } from "../services/agent-service.js";
+import type { WorkspaceUpdateService } from "../services/workspace-update-service.js";
+import { workspaceUpdateTools } from "./workspace-update.js";
 import type { Confirmations } from "../ui/confirmation.js";
 import type { CallAccess } from "./access.js";
 import { providersTool } from "./providers.js";
@@ -17,21 +19,21 @@ import { discoverProviderTool } from "./discover-provider.js";
 import { finishInitializationTool } from "./finish-initialization.js";
 import { pythonTool } from "./python.js";
 import { statusTool } from "./status.js";
-import { delegateTool, type BindExpertRun } from "./delegate.js";
+import { agentTool, type BindAgentRun } from "./agent.js";
 
 export interface ToolServices {
   providers: ProviderRegistry; execution: ExecutionService; initialization: InitializationService;
-  research: ResearchService; records: RecordService; experts: ExpertService;
+  research: ResearchService; records: RecordService; agents: AgentService; updates: WorkspaceUpdateService;
 }
-export function mainTools(services: ToolServices, access: CallAccess, confirmations: Confirmations, run: BindExpertRun): ToolDefinition[] {
-  const { providers, execution, initialization, research, records, experts } = services;
+export function mainTools(services: ToolServices, access: CallAccess, confirmations: Confirmations, run: BindAgentRun): ToolDefinition[] {
+  const { providers, execution, initialization, research, records, agents } = services;
   const tools: ToolDefinition[] = [providersTool(providers, access), providerCallTool(execution, records, access, confirmations),
     configureProviderTool(providers, access, confirmations), discoverProviderTool(providers, access)];
   if (initialization.snapshot().status === "pending") {
     tools.push(finishInitializationTool(initialization, access, confirmations));
   } else {
     tools.push(pythonTool(research, access), statusTool(initialization, execution, providers, access),
-      delegateTool(experts, access, run));
+      agentTool(agents, access, run), ...workspaceUpdateTools(services.updates, access, confirmations));
   }
   return tools;
 }

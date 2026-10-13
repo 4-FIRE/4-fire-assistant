@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { lstatSync, openSync, closeSync } from "node:fs";
+import { lstatSync, openSync, closeSync, fsyncSync } from "node:fs";
 import { canonical, type Json } from "../common/json.js";
 
 function privateFile(path: string) {
@@ -60,6 +60,13 @@ export class Store {
       try { this.#db.exec("ROLLBACK"); } catch { this.#failed = true; }
       throw error;
     }
+  }
+  snapshot(path: string) {
+    if (!this.healthy) throw new Error("业务存储不可备份。");
+    // VACUUM INTO creates a consistent SQLite snapshot and refuses an existing file.
+    this.#db.prepare("VACUUM INTO ?").run(path);
+    const fd = openSync(path, "r");
+    try { fsyncSync(fd); } finally { closeSync(fd); }
   }
   audit(event: string, data: Json) {
     this.put("audit", crypto.randomUUID(), { event, at: new Date().toISOString(), data });

@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { requireThat } from "../common/validation.js";
+import { authorizeMutation } from "../services/workspace-files.js";
 import { Scope } from "../model/execution-intent.js";
 import type { WorkspaceState } from "../model/workspace.js";
 import type { ProviderRegistry } from "../services/provider-registry.js";
@@ -7,35 +8,45 @@ import type { ExecutionService } from "../services/execution-service.js";
 import type { InitializationService } from "../services/initialization-service.js";
 import type { ResearchService } from "../services/research-service.js";
 import type { RecordService } from "../services/record-service.js";
-import type { ExpertService } from "../services/expert-service.js";
+import type { AgentService } from "../services/agent-service.js";
 import { startInitialization, prepareDirectories } from "../services/initialization-service.js";
 import { state } from "../storage/workspace-state.js";
+import type { WorkspaceUpdateService } from "../services/workspace-update-service.js";
 import type { Store } from "../storage/store.js";
 import type { CallAccess } from "../tools/access.js";
 
 export class WorkspaceInstance implements CallAccess {
   readonly #controller = new AbortController();
   #work = new AbortController();
+  #background = new AbortController();
   #closing: Promise<void> | undefined;
   constructor(readonly root: string, private readonly store: Store, readonly providers: ProviderRegistry,
     readonly execution: ExecutionService, readonly initialization: InitializationService,
-    readonly research: ResearchService, readonly records: RecordService, readonly experts: ExpertService) {}
+    readonly research: ResearchService, readonly records: RecordService, readonly agents: AgentService,
+    readonly updates: WorkspaceUpdateService) {}
   check(ready = false) {
     requireThat(!this.#controller.signal.aborted, "ffa 未启用；请执行 /ffa init。");
     requireThat(!ready || this.initialization.snapshot().status === "ready", "请先完成工作区初始化。");
   }
-  signal(signal?: AbortSignal) {
+  signal(signal?: AbortSignal, background = false) {
     this.check();
-    return AbortSignal.any([this.#controller.signal, this.#work.signal, ...(signal ? [signal] : [])]);
+    return AbortSignal.any([this.#controller.signal, background ? this.#background.signal : this.#work.signal, ...(signal ? [signal] : [])]);
+  }
+  async authorizeFile(path: string, change: unknown, confirm: (value: unknown) => Promise<boolean>, signal: AbortSignal) {
+    this.check();
+    await authorizeMutation(this.root, path, change, confirm, signal);
+    this.check();
   }
   scope(session: string) { this.check(); return new Scope(session); }
   cancelWork() { this.#work.abort(); this.#work = new AbortController(); }
+  cancelAgents() { this.#background.abort(); this.#background = new AbortController(); this.agents.cancelAll(); }
   close(): Promise<void> {
     if (this.#closing) return this.#closing;
-    this.#controller.abort(); this.#work.abort();
+    this.#controller.abort(); this.#work.abort(); this.#background.abort();
     this.#closing = (async () => {
       try {
-        const results = await Promise.allSettled([this.execution.close(), this.providers.close()]);
+        await this.agents.close();
+        const results = await Promise.allSettled([this.execution.close(), this.providers.close(), this.updates.close()]);
         const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
         if (errors.length) throw new AggregateError(errors, "工作区关闭失败。");
       } finally { this.store.close(); }

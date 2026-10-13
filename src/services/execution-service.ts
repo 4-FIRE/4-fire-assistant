@@ -18,7 +18,7 @@ export class ExecutionService {
   get(id: string) { return this.ledger.get(id); }
   unsettled() { return this.ledger.unsettled(); }
   call(scope: Scope, provider: string, operation: string, parameters: Params,
-    confirm: (preview: unknown) => Promise<boolean> = async () => false, signal?: AbortSignal): Promise<Intent> {
+    confirm: (preview: unknown, recheck: () => Promise<void>) => Promise<boolean> = async () => false, signal?: AbortSignal): Promise<Intent> {
     const pending = this.invoke(scope, provider, operation, structuredClone(parameters), confirm, signal);
     this.#active.add(pending);
     void pending.finally(() => this.#active.delete(pending)).catch(() => undefined);
@@ -29,7 +29,7 @@ export class ExecutionService {
     requireThat(!this.#closed && this.#healthy && this.store.healthy, "调用写入不可用；请核对记录。");
   }
   private async invoke(scope: Scope, provider: string, operation: string, parameters: Params,
-    confirm: (preview: unknown) => Promise<boolean>, signal?: AbortSignal) {
+    confirm: (preview: unknown, recheck: () => Promise<void>) => Promise<boolean>, signal?: AbortSignal) {
     this.check(signal);
     requireThat(this.providers.permission(provider, operation) !== "deny", "工具被禁止。");
     const binding = await this.providers.binding(provider, operation, signal);
@@ -41,7 +41,14 @@ export class ExecutionService {
     const intent = this.ledger.create(scope, provider, operation, parameters, binding, permission);
     let entered = false;
     try {
-      const allowed = permission === "allow" || await confirm({ intentId: intent.id, permission, invocation: preview });
+      const recheck = async () => {
+        this.check(signal);
+        requireThat(canonical(this.providers.permissions.read()) === permissions, "批准等待期间工具权限已变化。");
+        requireThat(await this.providers.binding(provider, operation, signal) === binding, "批准等待期间连接或目录已变化。");
+        requireThat(canonical(this.providers.preview(provider, operation, parameters)) === canonical(preview), "批准等待期间调用参数绑定已变化。");
+        this.check(signal);
+      };
+      const allowed = permission === "allow" || await confirm({ intentId: intent.id, permission, invocation: preview }, recheck);
       this.check(signal);
       requireThat(canonical(this.providers.permissions.read()) === permissions, "确认期间工具权限已变化。");
       if (!allowed) return this.ledger.decline(intent.id);

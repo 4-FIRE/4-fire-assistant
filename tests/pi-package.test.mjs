@@ -6,7 +6,7 @@ import { watch } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { host } from "./helpers/pi-host.mjs";
-import { expertLoader } from "../dist/integrations/expert-resources.js";
+import { agentLoader } from "../dist/integrations/agent-resources.js";
 import { schema } from "../dist/common/validation.js";
 
 for (const status of [undefined, "pending"]) {
@@ -23,9 +23,9 @@ for (const status of [undefined, "pending"]) {
 test("ready package dynamically loads skills and tools, while confirmations fail closed without UI", async t => {
   const { root, loader, session } = await host(t, "ready");
   const names = session.getAllTools().map(tool => tool.name);
-  assert.ok(names.includes("ffa_python")); assert.ok(names.includes("ffa_delegate"));
+  assert.ok(names.includes("ffa_python")); assert.ok(names.includes("ffa_agent"));
   assert.ok(!names.includes("ffa_finish_initialization"));
-  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["provider-connections", "trading"]);
+  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["provider-calls", "provider-connections", "trading"]);
   const storeFiles = await readdir(join(root, ".ffa"));
   assert.ok(storeFiles.includes("business.sqlite"));
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_provider");
@@ -53,21 +53,23 @@ test("real Pi tools save CLI evidence, read records and leave official MCP calls
   assert.equal(blocked, undefined);
   assert.equal(await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: "other", toolName: "mcp__alias__write", input: {} }), undefined);
 });
-test("expert resource loader excludes project extensions and exposes only role resources", async t => {
-  const root = await mkdtemp(join(tmpdir(), "ffa-expert-"));
+test("agent resources exclude arbitrary extensions and preserve workspace skill overrides", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ffa-agent-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, ".pi/extensions"), { recursive: true });
   await writeFile(join(root, ".pi/extensions/unwanted.ts"), "throw new Error('must not load');");
-  const loader = await expertLoader(root, "reviewer");
+  const loader = await agentLoader(root, "reviewer");
   assert.equal(loader.getExtensions().extensions.length, 0);
-  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name), ["trading"]);
-  assert.deepEqual((await expertLoader(root, "researcher")).getSkills().skills, []);
+  const bundled = loader.getSkills().skills.map(skill => skill.name).sort();
+  assert.deepEqual((await agentLoader(root, "researcher")).getSkills().skills.map(skill => skill.name).sort(), bundled);
+  assert.deepEqual((await agentLoader(root, "general-purpose")).getSkills().skills.map(skill => skill.name).sort(), bundled);
   const local = join(root, ".agents/skills/trading");
   await mkdir(local, { recursive: true });
   await writeFile(join(local, "SKILL.md"), "---\nname: trading\ndescription: Workspace method\n---\n");
-  for (const role of ["researcher", "reviewer"]) {
-    const skills = (await expertLoader(root, role)).getSkills().skills;
-    assert.deepEqual(skills.map(skill => skill.filePath), [join(local, "SKILL.md")]);
+  for (const agent of ["researcher", "reviewer"]) {
+    const skills = (await agentLoader(root, agent)).getSkills().skills;
+    assert.equal(skills.find(skill => skill.name === "trading").filePath, join(local, "SKILL.md"));
+    assert.deepEqual(skills.map(skill => skill.name).sort(), bundled);
   }
 });
 
@@ -110,12 +112,27 @@ test("real codemode discovers all active ffa tools and receives structured resul
   `);
   const data = scriptValue(result);
   assert.deepEqual(data.names, session.getCallableToolNames().filter(name => name.startsWith("ffa_")).sort());
-  for (const name of ["ffa_configure_provider", "ffa_delegate", "ffa_provider_call"]) assert.ok(data.names.includes(name));
+  for (const name of ["ffa_configure_provider", "ffa_agent", "ffa_provider_call"]) assert.ok(data.names.includes(name));
   assert.equal(data.namespace, "ffa"); assert.equal(data.described, true);
   assert.equal(data.catalogType, "object"); assert.equal(data.provider, "local");
   assert.deepEqual(data.data, { sample: 42 }); assert.deepEqual(data.saved, { sample: 42 });
   assert.equal(data.state, "ready");
   assert.ok(result.details.calls.every(call => call.status === "ok"));
+});
+
+test("real codemode uses the single agent action contract and returns the same run through wait and read", async t => {
+  const { session } = await host(t, "ready");
+  const result = await runScript(session, "agent-actions", `
+    const catalog = await tools.ffa_agent({ action: "list" });
+    const started = await tools.ffa_agent({ action: "start", agent: "general-purpose",
+      message: "Local request without authentication", mode: "background" });
+    const completed = await tools.ffa_agent({ action: "wait", runId: started.runId });
+    const read = await tools.ffa_agent({ action: "read", runId: started.runId, offset: 0, limit: 20 });
+    return { available: catalog.agents.includes("general-purpose"),
+      sameRun: started.runId === completed.runId && read.runId === completed.runId,
+      mode: completed.mode, state: completed.state, report: read.report };
+  `);
+  assert.deepEqual(scriptValue(result), { available: true, sameRun: true, mode: "background", state: "failed", report: "" });
 });
 
 test("ordinary changes still require the real Pi confirmation channel through codemode", async t => {

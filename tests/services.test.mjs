@@ -1,15 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, symlink } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { createAgentSession, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { agentModelRuntime } from "../dist/integrations/pi-agents.js";
+import { agentLoader } from "../dist/integrations/agent-resources.js";
 import { join } from "node:path";
 import { host } from "./helpers/pi-host.mjs";
 import { approveLocally, localConfirmation } from "./helpers/local-confirmation.mjs";
 import { Store } from "../dist/storage/store.js";
 import { begin, state } from "../dist/storage/workspace-state.js";
 import { ProviderConnections } from "../dist/integrations/provider-connections.js";
-import { PiExperts } from "../dist/integrations/pi-experts.js";
-import { bindExpertRun } from "../dist/integrations/expert-tools.js";
-import { ExpertService } from "../dist/services/expert-service.js";
+import { PiAgents } from "../dist/integrations/pi-agents.js";
+import { bindAgentRun, agentFileTools } from "../dist/integrations/agent-tools.js";
+import { AgentService } from "../dist/services/agent-service.js";
+import { agentContext } from "../dist/tools/agent-context.js";
 import { ResearchService } from "../dist/services/research-service.js";
 import { RecordService } from "../dist/services/record-service.js";
 import { WorkspaceInstance } from "../dist/extension/lifecycle.js";
@@ -18,6 +23,7 @@ import { ProviderRegistry } from "../dist/services/provider-registry.js";
 import { parseProvider, providerData } from "../dist/services/provider-config.js";
 import { ExecutionService } from "../dist/services/execution-service.js";
 import { InitializationService, prepareDirectories } from "../dist/services/initialization-service.js";
+import { WorkspaceUpdateService } from "../dist/services/workspace-update-service.js";
 import { Confirmations } from "../dist/ui/confirmation.js";
 import { Provider, Operation } from "../dist/model/provider.js";
 import { Intent } from "../dist/model/execution-intent.js";
@@ -41,12 +47,13 @@ async function fixture(t) {
   const confirmations = new Confirmations(), ctx = session.extensionRunner.createToolContext("local", undefined);
   const confirm = value => confirmations.ask(ctx, "Local boundary check", value);
   const initialization = new InitializationService(root, current, store, providers);
-  const research = new ResearchService(root, store), records = new RecordService(store), experts = new ExpertService(execution);
-  const instance = new WorkspaceInstance(root, store, providers, execution, initialization, research, records, experts);
-  const expertHost = new PiExperts();
-  const bindRun = (context, signal, progress) => bindExpertRun(api, expertHost, providers, records, research, instance, context, signal, progress, confirmations);
+  const research = new ResearchService(root, store), records = new RecordService(store), agents = new AgentService(execution);
+  const instance = new WorkspaceInstance(root, store, providers, execution, initialization, research, records, agents,
+    new WorkspaceUpdateService(root, store));
+  const agentHost = new PiAgents();
+  const bindRun = context => bindAgentRun(api, agentHost, providers, records, research, instance, context, confirmations);
   t.after(() => instance.close());
-  return { root, current, store, providers, execution, confirm, ctx, confirmations, experts, instance, bindRun };
+  return { root, session, current, store, providers, execution, confirm, ctx, confirmations, agents, instance, bindRun };
 }
 
 test("data classes serialize explicitly and caller changes do not alter a pending call", async t => {
@@ -139,24 +146,149 @@ test("pending workspace exposes initialization tools and structured call and rea
   assert.throws(() => f.instance.check(true));
 });
 
-test("expert branch references retain role and new independent reviewer boundaries", async t => {
+test("continuation selects an exact run checkpoint and keeps independent reviewer boundaries", async t => {
   const f = await fixture(t), signal = f.instance.signal();
-  assert.throws(() => f.experts.prepare({ role: "researcher", goal: "local", expertId: "absent" }, [], scope, signal));
-  const refs = [{ id: "known", role: "researcher", file: "/local/reference" }];
-  assert.throws(() => f.experts.prepare({ role: "reviewer", goal: "local", expertId: "known" }, refs, scope, signal));
-  const reviewers = [{ ...refs[0], role: "reviewer" }];
-  assert.throws(() => f.experts.prepare({ role: "reviewer", goal: "local", expertId: "known" }, reviewers, scope, signal));
-  const task = f.experts.prepare({ role: "reviewer", goal: "Review this plan and its quantities" }, [], scope, signal);
+  const manager = SessionManager.create(f.root, f.ctx.sessionManager.getSessionDir());
+  const first = manager.appendMessage({ role: "user", content: "Recorded first request", timestamp: Date.now() });
+  const second = manager.appendMessage({ role: "user", content: "Recorded later request", timestamp: Date.now() });
+  const session = { conversationId: "recorded-conversation", agent: "researcher", file: manager.getSessionFile(), leaf: first };
+  const value = { runId: "first", agent: "researcher", message: "Recorded request", mode: "foreground",
+    state: "completed", createdAt: 1, finishedAt: 2, activity: "completed", report: "", session,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+  f.agents.restore([value, { ...value, runId: "second", session: { ...session, leaf: second } },
+    { ...value, runId: "review", agent: "reviewer", session: { ...session, agent: "reviewer" } }], new Set());
+  const runIds = new Set(["first", "second", "review"]);
+  assert.throws(() => f.agents.prepare({ agent: "researcher", message: "local", runId: "absent" }, runIds, scope, signal));
+  assert.throws(() => f.agents.prepare({ agent: "researcher", message: "local", runId: "first" }, new Set(), scope, signal));
+  assert.equal(f.agents.prepare({ agent: "researcher", message: "local", runId: "first" }, runIds, scope, signal).previous.leaf, first);
+  assert.equal(f.agents.prepare({ agent: "researcher", message: "local", runId: "second" }, runIds, scope, signal).previous.leaf, second);
+  assert.throws(() => f.agents.prepare({ agent: "reviewer", message: "local", runId: "first" }, runIds, scope, signal));
+  assert.throws(() => f.agents.prepare({ agent: "reviewer", message: "local", runId: "review" }, runIds, scope, signal));
+  const task = f.agents.prepare({ agent: "reviewer", message: "Review this plan and its quantities" }, new Set(), scope, signal);
   const intent = await task.call("local", "echo", { independent: true }, approveLocally);
   assert.equal(intent.state, "observed"); assert.deepEqual(intent.observation.data, { independent: true });
 });
 
-test("expert calls use the same permission and cancellation boundary", async t => {
+test("busy continuation is rejected before queueing another request on the same conversation", async t => {
+  const f = await fixture(t), signal = f.instance.signal(undefined, true);
+  const manager = SessionManager.create(f.root, f.ctx.sessionManager.getSessionDir());
+  const leaf = manager.appendMessage({ role: "user", content: "Recorded request", timestamp: Date.now() });
+  const source = { runId: "source", agent: "researcher", message: "Recorded request", mode: "foreground",
+    state: "completed", createdAt: 1, finishedAt: 2, activity: "completed", report: "",
+    session: { conversationId: "recorded-conversation", agent: "researcher", file: manager.getSessionFile(), leaf },
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+  f.agents.restore([source], new Set());
+  const runIds = new Set(["source"]), host = new PiAgents();
+  const runId = f.agents.start({ agent: "researcher", message: "Local unauthenticated follow-up", runId: "source" },
+    runIds, scope, (task, cancel, progress, control) =>
+      host.run(f.ctx, task.agent, task.message, [], task.previous, cancel, progress, control), signal,
+    value => f.ctx.sessionManager.appendCustomEntry("ffa.agent-run", value));
+  runIds.add(runId);
+  assert.throws(() => f.agents.prepare({ agent: "researcher", message: "New round", runId: "source" }, runIds, scope, signal));
+  assert.throws(() => f.agents.prepare({ agent: "researcher", message: "New round", runId }, runIds, scope, signal));
+  await assert.rejects(f.agents.steer(runId, runIds, "Too early"));
+  assert.equal(f.agents.list(runIds).length, 2);
+  const result = await f.agents.wait(runId, runIds, signal);
+  assert.equal(result.state, "failed");
+  assert.equal(result.report, "");
+  assert.equal(f.agents.prepare({ agent: "researcher", message: "Explicit retry", runId }, runIds, scope, signal).previous.conversationId,
+    source.session.conversationId);
+});
+
+test("agent calls use the same permission and cancellation boundary", async t => {
   const f = await fixture(t), signal = f.instance.signal();
-  const task = f.experts.prepare({ role: "reviewer", goal: "Verify local numbers" }, [], scope, signal);
+  const task = f.agents.prepare({ agent: "reviewer", message: "Verify local numbers" }, new Set(), scope, signal);
   const intent = await task.call("local", "write", { quantity: 1 }, approveLocally);
   assert.equal(intent.permission, "review"); assert.equal(intent.state, "observed");
   await assert.rejects(task.call("local", "write", { quantity: 2 }, f.confirm));
   f.instance.cancelWork();
   await assert.rejects(async () => task.call("local", "echo", {}, approveLocally));
+});
+
+test("background calls survive foreground cancellation but stop at workspace navigation", async t => {
+  const f = await fixture(t), signal = f.instance.signal(undefined, true);
+  const task = f.agents.prepare({ agent: "general-purpose", message: "Local calculation" }, new Set(), scope, signal);
+  f.instance.cancelWork();
+  assert.equal(signal.aborted, false);
+  const intent = await task.call("local", "echo", { value: 42 }, approveLocally);
+  assert.equal(intent.state, "observed");
+  f.instance.cancelAgents();
+  await assert.rejects(async () => task.call("local", "echo", {}, approveLocally));
+});
+
+test("native agent file tools remain available while protecting internal aliases and rejecting outside writes before mkdir", async t => {
+  const f = await fixture(t), cancel = f.instance.signal(undefined, true);
+  const fileTools = agentFileTools(f.root, f.instance, f.ctx, cancel, f.confirmations);
+  const runtime = await agentModelRuntime(f.ctx.modelRegistry, f.ctx.model);
+  const { session } = await createAgentSession({ cwd: f.root, model: f.ctx.model, modelRuntime: runtime,
+    sessionManager: SessionManager.inMemory(f.root), settingsManager: SettingsManager.inMemory(),
+    resourceLoader: await agentLoader(f.root, "general-purpose"), customTools: fileTools,
+    tools: ["read", "bash", "write", "edit", "grep", "find", "ls"] });
+  t.after(() => session.dispose());
+  assert.deepEqual(session.getActiveToolNames().sort(), ["bash", "edit", "find", "grep", "ls", "read", "write"]);
+  const write = session.agent.state.tools.find(tool => tool.name === "write");
+  const edit = session.agent.state.tools.find(tool => tool.name === "edit");
+  await write.execute("artifact", { path: "projects/report.txt", content: "old" });
+  await edit.execute("update", { path: "projects/report.txt", edits: [{ oldText: "old", newText: "new" }] });
+  assert.equal(await readFile(join(f.root, "projects/report.txt"), "utf8"), "new");
+  const protectedPath = join(f.root, ".ffa/permissions.json"), before = await readFile(protectedPath, "utf8");
+  await symlink(join(f.root, ".ffa"), join(f.root, "internal-alias"));
+  for (const path of [protectedPath, pathToFileURL(protectedPath).href, "@" + protectedPath, "internal-alias/permissions.json"]) {
+    await assert.rejects(write.execute("internal", { path, content: "{}" }));
+    await assert.rejects(edit.execute("internal-edit", { path, edits: [{ oldText: before, newText: "{}" }] }));
+  }
+  assert.equal(await readFile(protectedPath, "utf8"), before);
+  const outside = join(f.root, "../not-authorized/file.txt");
+  await assert.rejects(write.execute("outside", { path: outside, content: "outside" }));
+  await assert.rejects(access(join(f.root, "../not-authorized")));
+});
+
+test("resuming a deferred approval checks changed permission before presenting it and never sends", async t => {
+  const f = await fixture(t), cancel = f.instance.signal(undefined, true);
+  let presented = false, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  f.confirmations.pause();
+  const pending = f.execution.call(scope, "local", "write", { quantity: 1 }, async (value, recheck) => {
+    entered(); await f.confirmations.ready(cancel); await recheck();
+    presented = true; return approveLocally(value);
+  }, cancel);
+  const rejected = assert.rejects(pending);
+  await waiting;
+  await writeFile(join(f.root, ".ffa/permissions.json"), JSON.stringify({ default: "deny", tools: {} }));
+  f.confirmations.resume(); await rejected;
+  assert.equal(presented, false);
+  assert.ok(f.store.list("intent").every(intent => intent.state === "declined" && !intent.attempt));
+});
+
+test("native usage receipts count only persisted parent results and survive codemode metadata removal", async t => {
+  const f = await fixture(t);
+  // These are serialized accounting records, not a model execution or a simulated provider.
+  const usage = { input: 2, output: 3, cacheRead: 0, cacheWrite: 3, cacheWrite1h: 2, reasoning: 1, totalTokens: 8,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+  const value = { runId: "recorded-run", agent: "researcher", message: "Recorded calculation", mode: "foreground",
+    state: "completed", createdAt: 1, startedAt: 2, finishedAt: 3, activity: "completed", report: "Recorded result", usage };
+  f.session.sessionManager.appendCustomEntry("ffa.agent-run", value);
+  f.session.sessionManager.appendCustomEntry("ffa.agent-usage", { runIds: [value.runId], toolCallId: "parent-codemode" });
+  let branch = agentContext(f.agents, f.ctx);
+  assert.equal(branch.reported.has(value.runId), false);
+  assert.equal(f.agents.usage(branch.runIds).usage.totalTokens, 8);
+  f.agents.reconcileUsage(branch.reported);
+  assert.equal(f.agents.usage(branch.runIds).usage.reasoning, 1);
+  const accountingAncestor = f.session.sessionManager.getLeafId();
+  f.session.sessionManager.appendMessage({ role: "toolResult", toolName: "codemode", toolCallId: "parent-codemode",
+    content: [{ type: "text", text: "Recorded accounting" }], isError: false, timestamp: Date.now(), usage, details: { calls: [] } });
+  branch = agentContext(f.agents, f.ctx);
+  assert.equal(branch.reported.has(value.runId), true);
+  f.agents.reconcileUsage(branch.reported);
+  assert.equal(f.agents.usage(branch.runIds).usage.totalTokens, 0);
+  const reopened = new AgentService(f.execution);
+  t.after(() => reopened.close());
+  const recovered = agentContext(reopened, f.ctx);
+  assert.equal(reopened.usage(recovered.runIds).usage.totalTokens, 0);
+  f.session.sessionManager.branch(accountingAncestor);
+  const alternative = agentContext(reopened, f.ctx);
+  assert.equal(alternative.reported.has(value.runId), true);
+  assert.equal(reopened.usage(alternative.runIds).usage.totalTokens, 0);
 });

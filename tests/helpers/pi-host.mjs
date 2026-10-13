@@ -30,7 +30,8 @@ export async function host(t, status, providers = [], permissions = { default: "
   assert.equal(loader.getExtensions().errors.length, 0);
   const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
   const { session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader: loader,
-    modelRuntime: runtime, sessionManager: SessionManager.inMemory(root) });
+    modelRuntime: runtime, model: runtime.getModels("openai-codex")[0],
+    sessionManager: SessionManager.create(root, join(temp, "sessions")) });
   const errors = [];
   await session.bindExtensions({ mode: "json", onError: error => errors.push(error) });
   t.after(async () => {

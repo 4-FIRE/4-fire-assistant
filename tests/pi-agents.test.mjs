@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
-import { expertModelRuntime } from "../dist/integrations/pi-experts.js";
-import { expertLoader } from "../dist/integrations/expert-resources.js";
+import { agentModelRuntime } from "../dist/integrations/pi-agents.js";
+import { agentLoader } from "../dist/integrations/agent-resources.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("expert runtime uses host auth for the real OAuth-only Codex provider without copying credentials", async t => {
-  const root = await mkdtemp(join(tmpdir(), "ffa-expert-auth-"));
+test("agent runtime uses host auth for the real OAuth-only Codex provider without copying credentials", async t => {
+  const root = await mkdtemp(join(tmpdir(), "ffa-agent-auth-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const host = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
   const registry = new ModelRegistry(host);
@@ -21,7 +21,7 @@ test("expert runtime uses host auth for the real OAuth-only Codex provider witho
   assert.equal(await host.checkAuth(model.provider), undefined);
   host.registerProvider(model.provider, { apiKey: "local-host-value", headers: { "X-Local-Auth": "first" } });
   await host.removeRuntimeApiKey(model.provider);
-  const child = await expertModelRuntime(registry, model);
+  const child = await agentModelRuntime(registry, model);
   assert.ok(await child.checkAuth(model.provider));
   assert.equal((await child.getAuth(model)).auth.apiKey, "local-host-value");
   assert.equal((await child.getAuth(model)).auth.headers["X-Local-Auth"], "first");
@@ -31,22 +31,22 @@ test("expert runtime uses host auth for the real OAuth-only Codex provider witho
   assert.equal((await child.getAuth(model)).auth.headers["X-Local-Auth"], "second");
   const { session } = await createAgentSession({ cwd: root, model, modelRuntime: child,
     sessionManager: SessionManager.inMemory(root), settingsManager: SettingsManager.inMemory(),
-    resourceLoader: await expertLoader(root, "reviewer"), tools: ["read"] });
+    resourceLoader: await agentLoader(root, "reviewer"), tools: ["read"] });
   t.after(() => session.dispose());
   assert.equal(session.model.provider, model.provider);
   assert.deepEqual(await child.listCredentials(), []);
 });
 
-test("expert runtime does not mark an unauthenticated Codex host as available", async () => {
+test("agent runtime does not mark an unauthenticated Codex host as available", async () => {
   const host = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
   const model = host.getModels("openai-codex")[0];
-  const child = await expertModelRuntime(new ModelRegistry(host), model);
+  const child = await agentModelRuntime(new ModelRegistry(host), model);
   assert.equal(await child.checkAuth(model.provider), undefined);
   assert.equal(await child.getAuth(model), undefined);
   assert.deepEqual(await child.listCredentials(), []);
 });
 
-test("expert auth resolves host OAuth credentials and observes local credential changes", async () => {
+test("agent auth resolves host OAuth credentials and observes local credential changes", async () => {
   const credentials = new InMemoryCredentialStore();
   // Non-secret credential records exercise the real SDK's OAuth derivation, not a model request.
   const credential = { type: "oauth", access: "local-oauth-access", refresh: "local-oauth-refresh",
@@ -54,7 +54,7 @@ test("expert auth resolves host OAuth credentials and observes local credential 
   await credentials.modify("openai-codex", async () => credential);
   const host = await ModelRuntime.create({ credentials, modelsPath: null });
   const model = host.getModels("openai-codex")[0];
-  const child = await expertModelRuntime(new ModelRegistry(host), model);
+  const child = await agentModelRuntime(new ModelRegistry(host), model);
   assert.equal((await child.checkAuth(model.provider)).type, "oauth");
   assert.equal((await child.getAuth(model)).auth.apiKey, credential.access);
   await credentials.modify(model.provider, async () => ({ ...credential, access: "changed-oauth-access" }));

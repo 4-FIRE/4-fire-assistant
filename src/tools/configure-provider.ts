@@ -14,7 +14,7 @@ import { result } from "./result.js";
 export function configureProviderTool(service: Pick<ProviderRegistry, "configure">, access: CallAccess, confirmations: Confirmations) {
   return defineTool({
     name: "ffa_configure_provider", label: "配置能力提供方", executionMode: "sequential",
-    description: "确认能力提供方配置。provider 为完整配置时，保存后自动发现 MCP 目录；发现失败保留注册并报告状态。provider 为 ID 时，仅确认初始 permissions，不重交目录或重连。权限只添加缺失规则，保留用户设置；默认 ask。契约见 references/providers.md，凭据仅引用 ${ENV_NAME}。",
+    description: "确认能力提供方配置。provider 为完整配置时，保存后自动发现 MCP 目录；发现失败保留注册并报告状态。provider 为 ID 时，仅确认初始 permissions，不重交目录或重连。权限只添加缺失规则，保留用户设置；默认 ask。配置契约见包内 skills/provider-connections/references/configuration.md，凭据仅引用 ${ENV_NAME}。",
     outputSchema: Type.Object({ configured: Type.String(), providers: Type.Array(catalogOutput), discoveryError: Type.Optional(Type.String()) }),
     parameters: Type.Object({ provider: Type.Unknown(), permissions: Type.Optional(Type.Record(Type.String(), permissionSchema)) }, { additionalProperties: false }),
     renderCall(args) {

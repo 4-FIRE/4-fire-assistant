@@ -9,7 +9,7 @@ import type { Receipt } from "../model/receipt.js";
 import type { Store } from "../storage/store.js";
 import type { ProviderRegistry } from "./provider-registry.js";
 
-export const directories = ["areas", "projects", "knowledge", "providers", "scratch"];
+export const directories = ["areas", "projects", "knowledge", "providers", "scratch", "agents"];
 export async function prepareDirectories(root: string) {
   for (const part of directories) {
     const path = join(root, part);

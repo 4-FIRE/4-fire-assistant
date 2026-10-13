@@ -122,8 +122,39 @@ export async function ask(ctx: ExtensionContext, title: string, value: unknown, 
 
 export class Confirmations {
   #queue: Promise<unknown> = Promise.resolve();
-  ask(ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal, summary?: string): Promise<boolean> {
-    const pending = this.#queue.then(() => ask(ctx, title, value, signal, summary));
+  #epoch = new AbortController();
+  #paused = false;
+  #presenting = false;
+  get presenting() { return this.#presenting; }
+  readonly #resumes = new Set<() => void>();
+  pause() { this.#paused = true; this.#epoch.abort(); }
+  resume() {
+    if (!this.#paused) return;
+    this.#paused = false; this.#epoch = new AbortController();
+    for (const resume of this.#resumes) resume();
+  }
+  async ready(signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    if (!this.#paused) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { this.#resumes.delete(resume); signal?.removeEventListener("abort", abort); };
+      const resume = () => { cleanup(); resolve(); };
+      const abort = () => { cleanup(); reject(signal?.reason); };
+      this.#resumes.add(resume); signal?.addEventListener("abort", abort, { once: true });
+    });
+    signal?.throwIfAborted();
+  }
+  async ask(ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal, summary?: string,
+    recheck?: () => Promise<void>): Promise<boolean> {
+    requireThat(ctx.hasUI, "此操作需要用户确认通道，非交互模式不能授权。");
+    await this.ready(signal);
+    const cancel = AbortSignal.any([this.#epoch.signal, ...(signal ? [signal] : [])]);
+    const pending = this.#queue.then(async () => {
+      cancel.throwIfAborted(); await recheck?.(); cancel.throwIfAborted();
+      this.#presenting = true;
+      try { return await ask(ctx, title, value, cancel, summary); }
+      finally { this.#presenting = false; }
+    });
     this.#queue = pending.catch(() => undefined);
     return pending;
   }

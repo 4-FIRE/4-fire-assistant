@@ -37,7 +37,7 @@ export function providerCallTool(service: Pick<ExecutionService, "call">, record
       }
       const cancel = access.signal(signal);
       const intent = await service.call(access.scope(ctx.sessionManager.getSessionId()), args.provider, args.operation, json(args.parameters) as Params,
-        value => confirmations.ask(ctx, "批准本次工具调用", value, cancel), cancel);
+        (value, recheck) => confirmations.ask(ctx, "批准本次工具调用", value, cancel, undefined, recheck), cancel);
       const data = intent.observation?.data ?? null, text = JSON.stringify(data), truncated = text.length > 16000;
       const success = intent.state === "observed" && intent.outcome === "accepted";
       return result({ intentId: intent.id, provider: intent.provider, operation: intent.operation, permission: intent.permission,

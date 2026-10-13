@@ -5,3 +5,4 @@
 - knowledge/：可复用知识。
 - providers/AGENTS.md：能力提供方手册导航。
 - scratch/：临时计算。
+- agents/：工作区专家职责补充与自定义定义；包内职责不复制。

@@ -19,6 +19,8 @@ description: 使用 ffa 核查具体交易方案、调用交易接口或核对�
 
 ## 结果核对
 
+执行调用、分页读取回执或处理未知结果时，使用 [provider-calls 技能](../provider-calls/SKILL.md)。
+
 ffa_provider_call 返回 intentId、可选 receiptId 和结果状态。用同一工具的 record 输入读取记录，结合原生订单和成交查询核对事实。受理不代表成交；撤单、补单或止盈是新的操作，需要各自的授权。
 
 结果未知时不自动重发；查不到订单也不证明未发送。未知记录不自动阻塞其他调用。核对外部事实后，由用户通过 /ffa resolve 结案；结案不授予重发许可。
