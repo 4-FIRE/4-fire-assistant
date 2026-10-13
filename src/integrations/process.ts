@@ -2,11 +2,15 @@ import { spawn } from "node:child_process";
 import type { Json } from "../common/json.js";
 import type { Observation } from "../model/receipt.js";
 
+export function processEnvironment(env: Record<string, string>) {
+  return { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8", ...env };
+}
+
 export async function runCommand(command: string, args: string[], input: string | undefined, cwd: string,
   env: Record<string, string>, signal?: AbortSignal): Promise<Observation> {
   signal?.throwIfAborted();
   return new Promise(resolve => {
-    const child = spawn(command, args, { cwd, env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8", ...env }, shell: false,
+    const child = spawn(command, args, { cwd, env: processEnvironment(env), shell: false,
       detached: true, stdio: ["pipe", "pipe", "pipe"] });
     let bytes = 0, failed = false;
     const out: Buffer[] = [], err: Buffer[] = [];

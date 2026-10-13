@@ -9,6 +9,9 @@ export function schema(value: unknown): ValidateFunction {
   addFormats.default(ajv);
   return ajv.compile(value);
 }
+export function isCommandName(value: string): boolean {
+  return /^[A-Za-z0-9_][A-Za-z0-9_.+-]*$/.test(value);
+}
 export function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

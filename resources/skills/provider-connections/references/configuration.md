@@ -52,7 +52,9 @@ outcomes.accepted 和 outcomes.rejected 是可选的原生结果 JSON Schema。�
 
 配置中的凭据只使用环境变量引用：env 值为 ${NAME}，headers 值为 ${NAME} 或 Bearer ${NAME}。不读取或输出凭据值，不写入手册或对话。字段约束不禁止复用能力提供方已有 profile。
 
-CLI 指定绝对 command，不用 shell 字符串。env 映射子进程环境变量；默认只提供 PATH 和 LANG。每个可调用操作指定 argv，可选 stdin=true。
+CLI 的 command 使用 PATH 中可直接执行的命令名，例如 `qmt-cli`；不接受绝对路径、相对路径、别名、shell 函数或 shell 字符串。先确认命令已安装且可直接执行，再依据帮助建立目录；需要安装或调整 PATH 时取得用户同意，不通过保存本机路径解决。
+
+env 映射子进程环境变量；默认只提供宿主 PATH 和 LANG，显式 PATH 可使用环境变量引用。命令参数与路径参数仍按原生接口定义绑定，命令名可移植不保证软件版本、认证或参数路径可移植。每个可调用操作指定 argv，可选 stdin=true。
 
 argv 元素为固定字符串、{"parameter":"参数名"} 或 {"json":true}。parameter 绑定单个标量，json 传递完整参数。stdin=true 发送完整 JSON。若不用完整 JSON 输入，schema 必须禁止额外字段，所有属性都必须绑定。可选属性绑定单个 argv 时也须实际提供。参数不得包含 NUL。
 

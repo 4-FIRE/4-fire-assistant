@@ -22,14 +22,14 @@ import { mainTools } from "../dist/tools/register.js";
 import { ProviderRegistry } from "../dist/services/provider-registry.js";
 import { parseProvider, providerData } from "../dist/services/provider-config.js";
 import { ExecutionService } from "../dist/services/execution-service.js";
-import { InitializationService, prepareDirectories } from "../dist/services/initialization-service.js";
+import { InitializationService, prepareWorkspace } from "../dist/services/initialization-service.js";
 import { WorkspaceUpdateService } from "../dist/services/workspace-update-service.js";
 import { Confirmations } from "../dist/ui/confirmation.js";
 import { Provider, Operation } from "../dist/model/provider.js";
 import { Intent } from "../dist/model/execution-intent.js";
 import { canonical, json } from "../dist/common/json.js";
 
-const provider = { id: "local", kind: "cli", coverage: { basis: "printf(1)", limitations: ["Only JSON output is described"] }, command: "/usr/bin/printf", operations: [
+const provider = { id: "local", kind: "cli", coverage: { basis: "printf(1)", limitations: ["Only JSON output is described"] }, command: "printf", operations: [
   { name: "echo", description: "Read explicit JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
   { name: "write", description: "Print quantity", inputSchema: { type: "object", required: ["quantity"],
     properties: { quantity: { type: "integer", minimum: 1 } }, additionalProperties: false }, argv: ["%s", { json: true }] },
@@ -99,7 +99,7 @@ test("workspace cancellation stops current approval without cancelling a later e
 
 test("initialization retains pending state and user documents when host confirmation rejects", async t => {
   const f = await fixture(t), service = new InitializationService(f.root, f.current, f.store, f.providers);
-  await prepareDirectories(f.root);
+  await prepareWorkspace(f.root);
   await writeFile(join(f.root, "AGENTS.md"), "User-owned instructions");
   await writeFile(join(f.root, "providers/AGENTS.md"), "Provider index");
   await mkdir(join(f.root, "providers/local"));
@@ -121,7 +121,7 @@ test("initialization accepts complete catalogs and current successful receipts",
   f.store.put("provider", "local", providerData(parseProvider(configured)));
   const quote = await f.execution.call(scope, "local", "echo", { quote: true }, approveLocally);
   const history = await f.execution.call(scope, "local", "echo", { history: true }, approveLocally);
-  await prepareDirectories(f.root);
+  await prepareWorkspace(f.root);
   await writeFile(join(f.root, "providers/AGENTS.md"), "Provider index");
   await mkdir(join(f.root, "providers/local"));
   await writeFile(join(f.root, "providers/local/GUIDE.md"), "Known capabilities");

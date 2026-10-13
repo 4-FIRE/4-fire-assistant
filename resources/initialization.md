@@ -15,4 +15,4 @@
 
 根 AGENTS.md 用于资料导航和已确认的工作区约定。areas/ 保存长期目标与结论，projects/ 保存需要保留的研究过程，knowledge/ 保存可复用知识，scratch/ 保存临时计算。包内规则留在包内，分析假设留在对应研究中。
 
-调用 ffa_finish_initialization 提交市场及两个回执 ID，市场须与已确认的工作区资料一致。工具检查资料和连接并请求用户确认；根 AGENTS.md 缺失时会创建简短导航。完成后提示用户执行 /reload，并用 ffa_status 核对保存的市场。未完成时退出或重载会暂停初始化，再次 /ffa init 才接续。
+调用 ffa_finish_initialization 提交市场及两个回执 ID，市场须与已确认的工作区资料一致。工具检查资料和连接并请求用户确认。完成后提示用户执行 /reload，并用 ffa_status 核对保存的市场。未完成时退出或重载会暂停初始化，再次 /ffa init 才接续。

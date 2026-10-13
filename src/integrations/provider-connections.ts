@@ -7,7 +7,8 @@ import type { Provider, Operation } from "../model/provider.js";
 import type { ProviderAccess } from "../services/provider-access.js";
 import { environment, expand } from "./provider-environment.js";
 import { PrivateMcp } from "./private-mcp.js";
-import { invokeCli } from "./cli-provider.js";
+import { cliExecutable, invokeCli } from "./cli-provider.js";
+import { processEnvironment } from "./process.js";
 
 export class ProviderConnections implements ProviderAccess {
   readonly #epochs = new Map<string, string>();
@@ -25,7 +26,8 @@ export class ProviderConnections implements ProviderAccess {
   }
   async replace(provider: Provider) {
     requireThat(!this.#closed, "能力提供方已关闭。");
-    if (provider.command) { await access(provider.command, constants.X_OK); provider.command = await realpath(provider.command); }
+    if (provider.kind === "cli") await cliExecutable(this.root, provider);
+    else if (provider.command) { await access(provider.command, constants.X_OK); provider.command = await realpath(provider.command); }
     await this.#private.remove(provider.id); this.#epochs.delete(provider.id);
   }
   async discover(provider: Provider, signal?: AbortSignal, refresh = true) {
@@ -34,12 +36,14 @@ export class ProviderConnections implements ProviderAccess {
   }
   async binding(provider: Provider, operation: Operation, signal?: AbortSignal): Promise<string> {
     requireThat(!this.#closed, "能力提供方已关闭。");
-    if (provider.kind === "cli") await access(provider.command!, constants.X_OK);
-    return this.identity(provider, provider.kind === "cli" ? operation.inputSchema : await this.#private.definition(provider, operation.name, signal));
+    const native = provider.kind === "cli"
+      ? { inputSchema: operation.inputSchema, executable: await cliExecutable(this.root, provider) }
+      : await this.#private.definition(provider, operation.name, signal);
+    return this.identity(provider, native);
   }
   identity(provider: Provider, native: unknown) {
     return digest({ provider: { ...provider, operations: provider.operations.map(operation => ({ ...operation })) }, native,
-      epoch: this.epoch(provider.id), environment: environment(provider),
+      epoch: this.epoch(provider.id), environment: provider.kind === "cli" ? processEnvironment(environment(provider)) : environment(provider),
       headers: Object.fromEntries(Object.entries(provider.headers ?? {}).map(([k, v]) => [k, expand(v)])) });
   }
   async invoke(provider: Provider, operation: Operation, parameters: Params, preview: Params, gate: (native: unknown) => void,

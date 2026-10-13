@@ -9,7 +9,7 @@ import type { InitializationService } from "../services/initialization-service.j
 import type { ResearchService } from "../services/research-service.js";
 import type { RecordService } from "../services/record-service.js";
 import type { AgentService } from "../services/agent-service.js";
-import { startInitialization, prepareDirectories } from "../services/initialization-service.js";
+import { startInitialization } from "../services/initialization-service.js";
 import { state } from "../storage/workspace-state.js";
 import type { WorkspaceUpdateService } from "../services/workspace-update-service.js";
 import type { Store } from "../storage/store.js";
@@ -73,7 +73,7 @@ export class Lifecycle {
   }
   async start(root: string, confirm: (value: unknown, continuing: boolean) => Promise<boolean>) {
     const initial = await startInitialization(await realpath(root), confirm);
-    await this.open(root, initial); await prepareDirectories(root);
+    await this.open(root, initial);
   }
   async close() {
     const old = this.#active; this.#active = undefined;

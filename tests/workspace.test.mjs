@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, symlink } from "node:fs/promises";
+import { mkdtemp, rm, readdir, mkdir, writeFile, readFile, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { begin, state } from "../dist/storage/workspace-state.js";
-import { prepareDirectories, documentsReady, finish } from "../dist/services/initialization-service.js";
+import { prepareWorkspace, documentsReady, finish, startInitialization } from "../dist/services/initialization-service.js";
 import { mutationTarget } from "../dist/common/files.js";
+import { approveLocally, localConfirmation } from "./helpers/local-confirmation.mjs";
 
 async function directory(t) {
   const root = await mkdtemp(join(tmpdir(), "ffa-workspace-"));
@@ -18,7 +19,7 @@ test("inspection is read-only; explicit initialization persists pending without 
   assert.deepEqual(await readdir(root), ["AGENTS.md"]);
   assert.equal((await begin(root)).status, "pending");
   assert.equal((await state(root)).format, "ffa-pi/1");
-  await prepareDirectories(root);
+  await prepareWorkspace(root);
   assert.deepEqual(await begin(root), await state(root));
   assert.equal(await readFile(join(root, "AGENTS.md"), "utf8"), "User-owned instructions");
   await assert.rejects(documentsReady(root, ["market"]));
@@ -29,6 +30,26 @@ test("inspection is read-only; explicit initialization persists pending without 
   await finish(root, "market");
   assert.equal((await state(root)).status, "ready");
   await assert.rejects(finish(root, "other"));
+});
+test("confirmed initialization prepares a root entry before returning and preserves edits on resume", async t => {
+  const root = await directory(t);
+  const initial = await startInitialization(root, approveLocally);
+  assert.equal(initial.status, "pending");
+  const entry = join(root, "AGENTS.md");
+  assert.ok((await stat(entry)).isFile());
+  assert.ok((await stat(entry)).size > 0);
+  await writeFile(entry, "User-owned instructions");
+  await startInitialization(root, approveLocally);
+  assert.equal(await readFile(entry, "utf8"), "User-owned instructions");
+});
+test("declining initialization creates neither state nor a root entry", async t => {
+  const root = await directory(t), confirmation = localConfirmation();
+  const pending = startInitialization(root, confirmation.ask);
+  const rejected = assert.rejects(pending);
+  const { dialog } = await confirmation.ready;
+  dialog.handleInput("\x1b");
+  await rejected;
+  assert.deepEqual(await readdir(root), []);
 });
 test("old and damaged state is rejected without being replaced", async t => {
   const root = await directory(t);

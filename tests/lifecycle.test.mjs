@@ -8,7 +8,7 @@ import { host } from "./helpers/pi-host.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { assertAgentBranch } from "../dist/integrations/agent-tools.js";
 
-const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "printf", operations: [
   { name: "echo", description: "Read JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
 ] };
 
@@ -30,7 +30,7 @@ test("old tool references cannot access a reopened workspace instance", async t 
 
 test("workspace shutdown waits for a cancelled external call to save its unknown result", { timeout: 15_000 }, async t => {
   const code = "import json,sys,time\nfrom pathlib import Path\np=json.load(sys.stdin)\nPath(p['file']).write_text('sent')\ntime.sleep(60)";
-  const provider = { id: "local", kind: "cli", command: "/usr/bin/python3", coverage: { basis: "Local file calculation", limitations: [] },
+  const provider = { id: "local", kind: "cli", command: "python3", coverage: { basis: "Local file calculation", limitations: [] },
     operations: [{ name: "write", description: "Write local marker and wait", inputSchema: { type: "object" }, argv: ["-c", code], stdin: true }] };
   const { root, session } = await host(t, "ready", [provider], { default: "allow", tools: {} });
   let shutdown;

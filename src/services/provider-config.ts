@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { Provider } from "../model/provider.js";
 import { object, type Params } from "../common/json.js";
-import { requireThat, schema } from "../common/validation.js";
+import { isCommandName, requireThat, schema } from "../common/validation.js";
 
 const providerSchema = schema({ type: "object", additionalProperties: false,
   required: ["id", "kind", "operations"], properties: {
@@ -29,7 +29,10 @@ export function parseProvider(value: unknown): Provider {
   requireThat(providerSchema(value), "能力提供方配置无效。凭据只能引用 ${ENV_NAME}。");
   const provider = structuredClone(value) as Provider;
   requireThat(Boolean(provider.command) !== Boolean(provider.url), "能力提供方必须指定 command 或 url，不能同时指定。");
-  if (provider.command) requireThat(isAbsolute(provider.command) && !provider.command.includes("\0"), "command 必须是绝对路径。");
+  if (provider.command) {
+    if (provider.kind === "cli") requireThat(isCommandName(provider.command), "CLI command 必须是 PATH 中可直接执行的命令名，不接受路径或 shell 字符串。");
+    else requireThat(isAbsolute(provider.command) && !provider.command.includes("\0"), "MCP command 必须是绝对路径。");
+  }
   if (provider.url) {
     const url = new URL(provider.url);
     requireThat(["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash, "URL 不得含凭据、查询或片段。");

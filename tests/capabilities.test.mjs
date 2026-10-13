@@ -31,13 +31,79 @@ async function fixture(t) {
     additionalProperties: false, required: ["file", "note"], properties: { file: { type: "string" }, note: { type: "string" } } },
     argv: ["-a", { parameter: "file" }], stdin: true,
     outcomes: { accepted: { type: "object", required: ["file", "note"] }, rejected: { const: false } } };
-  const provider = { id: "notes", kind: "cli", command: "/usr/bin/tee", coverage: { basis: "tee(1)", limitations: ["Only append is described"] }, operations: [operation] };
+  const provider = { id: "notes", kind: "cli", command: "tee", coverage: { basis: "tee(1)", limitations: ["Only append is described"] }, operations: [operation] };
   store.put("provider", provider.id, providerData(parseProvider(provider)));
   t.after(async () => { await execution.close(); await providers.close(); store.close(); await rm(root, { recursive: true, force: true }); });
   const config = join(root, ".ffa/permissions.json");
   const setPermission = permission => writeFile(config, JSON.stringify({ default: "ask", tools: { "notes/append": permission } }));
   return { root, store, providers, execution, provider, operation, config, setPermission };
 }
+
+test("CLI command names persist unchanged and execute through each workspace's host PATH", async t => {
+  const first = await fixture(t), second = await fixture(t), originalPath = process.env.PATH;
+  t.after(() => { if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath; });
+  const provider = { id: "portable", kind: "cli", command: "local-printf",
+    coverage: { basis: "printf(1)", limitations: [] },
+    operations: [{ name: "print", description: "Print JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] };
+  for (const f of [first, second]) {
+    const bin = join(f.root, "bin");
+    await mkdir(bin);
+    await symlink("/usr/bin/printf", join(bin, "local-printf"));
+    process.env.PATH = bin + ":/usr/bin:/bin";
+    await f.providers.configure(provider, approveLocally, undefined, { "portable/print": "allow" });
+    assert.equal(f.store.get("provider", "portable").command, "local-printf");
+    assert.equal(f.providers.preview("portable", "print", {}).command, "local-printf");
+    const result = await f.execution.call(scope, "portable", "print", { value: 42 });
+    assert.deepEqual(result.observation.data, { value: 42 });
+    assert.deepEqual(f.store.get("receipt", result.receiptId).data, { value: 42 });
+  }
+});
+
+test("CLI changes to PATH, executable target or availability during approval never send", async t => {
+  for (const change of ["path", "target", "remove"]) {
+    await t.test(change, async t => {
+      const f = await fixture(t), originalPath = process.env.PATH, bin = join(f.root, "bin");
+      t.after(() => { if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath; });
+      await mkdir(bin);
+      const executable = join(bin, "local-printf");
+      await symlink("/usr/bin/printf", executable);
+      process.env.PATH = bin + ":/usr/bin:/bin";
+      await f.providers.configure({ id: "portable", kind: "cli", command: "local-printf",
+        coverage: { basis: "printf(1)", limitations: [] },
+        operations: [{ name: "print", description: "Print JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] },
+      approveLocally);
+      const confirmation = localConfirmation(), pending = f.execution.call(scope, "portable", "print", {}, confirmation.ask);
+      const rejected = assert.rejects(pending);
+      const { dialog, value } = await confirmation.ready;
+      if (change === "path") process.env.PATH += ":/additional-directory";
+      else {
+        await rm(executable);
+        if (change === "target") await symlink("/usr/bin/tee", executable);
+      }
+      dialog.handleInput("\t"); dialog.handleInput("\r");
+      await rejected;
+      assert.equal(f.execution.get(value.intentId).attempt, undefined);
+      assert.equal(f.store.list("receipt").length, 0);
+    });
+  }
+});
+
+test("missing and non-executable CLI commands cannot register; stored absolute commands cannot send", async t => {
+  const f = await fixture(t), originalPath = process.env.PATH, bin = join(f.root, "bin");
+  t.after(() => { if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath; });
+  await mkdir(bin);
+  process.env.PATH = bin;
+  const provider = { id: "blocked", kind: "cli", command: "not-installed", coverage: { basis: "Local availability check", limitations: [] },
+    operations: [{ name: "run", description: "", inputSchema: { type: "object", additionalProperties: false }, argv: [] }] };
+  await assert.rejects(f.providers.configure(provider, approveLocally));
+  await writeFile(join(bin, "not-executable"), "not executable", { mode: 0o600 });
+  await assert.rejects(f.providers.configure({ ...provider, command: "not-executable" }, approveLocally));
+  assert.equal(f.store.get("provider", "blocked"), undefined);
+  f.store.put("provider", "notes", { ...f.provider, command: "/usr/bin/tee" });
+  await assert.rejects(f.execution.call(scope, "notes", "append", { file: join(f.root, "unsent"), note: "local" }, approveLocally));
+  assert.equal(f.store.get("provider", "notes").command, "/usr/bin/tee");
+  assert.equal(f.store.list("intent").length, 0);
+});
 
 test("catalog preserves all native definitions and availability without granting permission", () => {
   const first = mergeCatalog(parseProvider(connection), [definition, { ...definition, name: "other" }]);
@@ -284,7 +350,7 @@ test("known rejected business results keep failed receipts without an unknown ob
 
 test("real process failure returns an unknown record with the protocol output", async t => {
   const f = await fixture(t);
-  await f.providers.configure({ id: "failure", kind: "cli", command: "/usr/bin/false",
+  await f.providers.configure({ id: "failure", kind: "cli", command: "false",
     coverage: { basis: "false(1)", limitations: [] },
     operations: [{ name: "exit", description: "Exit nonzero", inputSchema: { type: "object", additionalProperties: false }, argv: [] }] },
     approveLocally, undefined, { "failure/exit": "allow" });
@@ -297,7 +363,7 @@ test("real process failure returns an unknown record with the protocol output", 
 test("cancellation after a real file write retains an unknown attempt and never repeats it", { timeout: 15_000 }, async t => {
   const f = await fixture(t), file = join(f.root, "written"), controller = new AbortController();
   const code = "import json,sys,time\nfrom pathlib import Path\np=json.load(sys.stdin)\nPath(p['file']).write_text(json.dumps(p))\ntime.sleep(60)";
-  await f.providers.configure({ id: "process", kind: "cli", command: "/usr/bin/python3",
+  await f.providers.configure({ id: "process", kind: "cli", command: "python3",
     coverage: { basis: "Local Python file calculation", limitations: [] },
     operations: [{ name: "write", description: "Write local input and wait", inputSchema: { type: "object" }, argv: ["-c", code], stdin: true }] },
     approveLocally, undefined, { "process/write": "allow" });

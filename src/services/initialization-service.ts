@@ -10,12 +10,15 @@ import type { Store } from "../storage/store.js";
 import type { ProviderRegistry } from "./provider-registry.js";
 
 export const directories = ["areas", "projects", "knowledge", "providers", "scratch", "agents"];
-export async function prepareDirectories(root: string) {
+export async function prepareWorkspace(root: string) {
   for (const part of directories) {
     const path = join(root, part);
     await mkdir(path, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
     requireThat((await lstat(path)).isDirectory() && !(await lstat(path)).isSymbolicLink(), "投资目录不能使用符号链接：" + path);
   }
+  const agents = await readFile(join(resourceRoot, "templates/workspace-agents.md"), "utf8");
+  await writeFile(join(root, "AGENTS.md"), agents, { flag: "wx" })
+    .catch(error => { if (error.code !== "EEXIST") throw error; });
 }
 export async function documentsReady(root: string, providers: string[]) {
   for (const path of ["AGENTS.md", "providers/AGENTS.md", ...providers.map(id => "providers/" + id + "/GUIDE.md")]) {
@@ -48,10 +51,7 @@ export class InitializationService {
       requireThat(receipt.binding === await this.providers.binding(receipt.provider, receipt.operation, signal), "查询能力提供方已变化，请重新验证。");
     }
     this.checkCatalog();
-    await prepareDirectories(this.root);
-    const agents = await readFile(join(resourceRoot, "templates/workspace-agents.md"), "utf8");
-    await writeFile(join(this.root, "AGENTS.md"), agents, { flag: "wx" })
-      .catch(error => { if (error.code !== "EEXIST") throw error; });
+    await prepareWorkspace(this.root);
     await documentsReady(this.root, [...new Set(receipts.map(receipt => receipt!.provider))]);
     requireThat(await confirm({ root: this.root, market: input.market, quote: receipts[0], history: receipts[1] }), "用户未确认完成。");
     signal.throwIfAborted();
@@ -64,5 +64,7 @@ export class InitializationService {
 export async function startInitialization(root: string, confirm: (value: unknown, continuing: boolean) => Promise<boolean>) {
   const current = await state(root);
   requireThat(await confirm({ root }, !!current), "用户未开启初始化。");
-  return begin(root);
+  const initial = await begin(root);
+  await prepareWorkspace(root);
+  return initial;
 }

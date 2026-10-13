@@ -30,11 +30,11 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   assert.ok(storeFiles.includes("business.sqlite"));
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_configure_provider");
   assert.ok(configure);
-  await assert.rejects(configure.execute("test", { provider: { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf",
+  await assert.rejects(configure.execute("test", { provider: { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "printf",
     operations: [{ name: "read", description: "Print", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] } }, undefined));
 });
 test("real Pi tools save CLI evidence, read records and leave official MCP calls outside ffa", async t => {
-  const provider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+  const provider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "printf", operations: [
     { name: "echo", description: "Return explicit JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
     { name: "write", description: "Requires approval", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
       outcomes: { accepted: { const: true }, rejected: { const: false } } }
@@ -73,7 +73,7 @@ test("agent resources exclude arbitrary extensions and preserve workspace skill 
   }
 });
 
-const localProvider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "/usr/bin/printf", operations: [
+const localProvider = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract", limitations: ["Only the documented test commands"] }, command: "printf", operations: [
   { name: "echo", description: "Return JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] },
   { name: "write", description: "Requires approval", inputSchema: { type: "object" }, argv: ["%s", { json: true }],
     outcomes: { accepted: { const: true }, rejected: { const: false } } }
