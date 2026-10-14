@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, access, symlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, symlink, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createAgentSession, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { agentModelRuntime } from "../dist/integrations/pi-agents.js";
@@ -36,17 +36,19 @@ const provider = { id: "local", kind: "cli", coverage: { basis: "printf(1)", lim
 ] };
 const scope = { session: "local-session" };
 
-async function fixture(t) {
+async function fixture(t, withProvider = true) {
   const { root, session, api } = await host(t);
   const current = await begin(root), store = new Store(join(root, ".ffa"));
-  store.put("provider", provider.id, providerData(parseProvider(provider)));
+  if (withProvider) store.put("provider", provider.id, providerData(parseProvider(provider)));
   const providers = new ProviderRegistry(store, new ProviderConnections(root), root);
   const execution = new ExecutionService(providers, store);
-  await providers.permissions.initialize();
-  await writeFile(join(root, ".ffa/permissions.json"), JSON.stringify({ default: "ask", tools: { "local/echo": "allow", "local/write": "review" } }));
+  if (withProvider) {
+    await providers.permissions.initialize();
+    await writeFile(join(root, ".ffa/permissions.json"), JSON.stringify({ default: "ask", tools: { "local/echo": "allow", "local/write": "review" } }));
+  }
   const confirmations = new Confirmations(), ctx = session.extensionRunner.createToolContext("local", undefined);
   const confirm = value => confirmations.ask(ctx, "Local boundary check", value);
-  const initialization = new InitializationService(root, current, store, providers);
+  const initialization = new InitializationService(root, current, providers);
   const research = new ResearchService(root, store), records = new RecordService(store), agents = new AgentService(execution);
   const instance = new WorkspaceInstance(root, store, providers, execution, initialization, research, records, agents,
     new WorkspaceUpdateService(root, store));
@@ -83,7 +85,7 @@ test("invalid parameters and noninteractive approval reject without sending", as
   await assert.rejects(f.execution.call(scope, "local", "absent", {}, f.confirm));
   await assert.rejects(f.execution.call(scope, "local", "write", { quantity: 0 }, approveLocally));
   assert.ok(f.store.list("intent").every(intent => !intent.attempt));
-  await assert.rejects(f.providers.configure({ ...provider, id: "other" }, f.confirm));
+  await assert.rejects(f.providers.manage({ action: "register", provider: "other", config: { kind: "cli", command: provider.command }, coverage: provider.coverage, operations: provider.operations }, f.confirm));
   assert.deepEqual(f.providers.list().map(value => value.id), ["local"]);
 });
 
@@ -98,50 +100,130 @@ test("workspace cancellation stops current approval without cancelling a later e
 });
 
 test("initialization retains pending state and user documents when host confirmation rejects", async t => {
-  const f = await fixture(t), service = new InitializationService(f.root, f.current, f.store, f.providers);
+  const f = await fixture(t), service = new InitializationService(f.root, f.current, f.providers);
   await prepareWorkspace(f.root);
   await writeFile(join(f.root, "AGENTS.md"), "User-owned instructions");
   await writeFile(join(f.root, "providers/AGENTS.md"), "Provider index");
   await mkdir(join(f.root, "providers/local"));
   await writeFile(join(f.root, "providers/local/GUIDE.md"), "Provider guide");
-  const quote = await f.execution.call(scope, "local", "echo", { quote: true }, approveLocally);
-  const history = await f.execution.call(scope, "local", "echo", { history: true }, approveLocally);
-  const signal = f.instance.signal();
-  await assert.rejects(service.complete({ market: "local", quote: quote.receiptId, history: quote.receiptId }, f.confirm, signal));
-  await assert.rejects(service.complete({ market: "local", quote: quote.receiptId, history: history.receiptId }, f.confirm, signal));
+  await assert.rejects(service.complete({ market: "local" }, f.confirm, f.instance.signal()));
   assert.equal(service.snapshot().status, "pending");
   assert.equal((await state(f.root)).status, "pending");
   assert.equal(await readFile(join(f.root, "AGENTS.md"), "utf8"), "User-owned instructions");
 });
 
-test("initialization accepts complete catalogs and current successful receipts", async t => {
+test("initialization accepts complete catalogs without requiring business calls", async t => {
   const f = await fixture(t);
   const configured = providerData(f.providers.provider("local"));
   configured.operations.push({ name: "undocumented", description: "", inputSchema: { type: "object" }, argv: ["%s", { json: true }] });
   f.store.put("provider", "local", providerData(parseProvider(configured)));
-  const quote = await f.execution.call(scope, "local", "echo", { quote: true }, approveLocally);
-  const history = await f.execution.call(scope, "local", "echo", { history: true }, approveLocally);
   await prepareWorkspace(f.root);
   await writeFile(join(f.root, "providers/AGENTS.md"), "Provider index");
   await mkdir(join(f.root, "providers/local"));
   await writeFile(join(f.root, "providers/local/GUIDE.md"), "Known capabilities");
-  await f.instance.initialization.complete({ market: "local", quote: quote.receiptId, history: history.receiptId }, approveLocally, f.instance.signal());
+  await f.instance.initialization.complete({ market: "local" }, approveLocally, f.instance.signal());
   assert.equal(f.instance.initialization.snapshot().status, "ready");
+  assert.equal((await state(f.root)).market, "local");
   assert.equal(f.providers.permission("local", "undocumented"), "ask");
+  assert.deepEqual(f.store.list("intent"), []);
 });
+
+test("registered providers do not require guides for initialization but missing internal permissions still fail closed", async t => {
+  const f = await fixture(t), service = f.instance.initialization, signal = f.instance.signal();
+  const path = join(f.root, ".ffa/permissions.json"), permissions = await readFile(path, "utf8");
+  await rm(path);
+  await assert.rejects(service.complete({}, approveLocally, signal));
+  await assert.rejects(access(path));
+  assert.equal((await state(f.root)).status, "pending");
+  await writeFile(path, permissions);
+  await service.complete({}, approveLocally, signal);
+  assert.equal((await state(f.root)).status, "ready");
+  await assert.rejects(access(join(f.root, "providers/AGENTS.md")));
+  await assert.rejects(access(join(f.root, "providers/local/GUIDE.md")));
+  assert.deepEqual(f.store.list("intent"), []);
+});
+
+test("failed MCP discovery does not block initialization or become verified on reopening", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, false), signal = f.instance.signal();
+  // The actual local process exits immediately; no MCP server is simulated.
+  const configured = await f.providers.manage({ action: "register", provider: "offline", config: { kind: "mcp", command: "/usr/bin/false" } }, approveLocally, signal);
+  assert.equal(configured.discovery.status, "failed");
+  const before = providerData(f.providers.provider("offline"));
+  await f.instance.initialization.complete({}, approveLocally, signal);
+  assert.equal((await state(f.root)).status, "ready");
+  assert.deepEqual(providerData(f.providers.provider("offline")), before);
+  assert.deepEqual(f.store.list("intent"), []);
+  assert.deepEqual(f.store.list("receipt"), []);
+  await f.instance.close();
+  await f.session.extensionRunner.emit({ type: "session_start" });
+  const tools = f.session.agent.state.tools;
+  const status = await tools.find(tool => tool.name === "ffa_status").execute("status", {});
+  assert.equal(status.structuredContent.workspace.status, "ready");
+  assert.equal(status.structuredContent.notices.length, 1);
+  const catalog = await tools.find(tool => tool.name === "ffa_providers").execute("catalog", {});
+  assert.equal(catalog.structuredContent.providers[0].discovery.status, "failed");
+  const call = tools.find(tool => tool.name === "ffa_provider_call");
+  await assert.rejects(call.execute("unavailable", { provider: "offline", operation: "absent", parameters: {} }));
+});
+
+test("workspace initializes without providers or market and native Pi enables its tools on reopening", async t => {
+  const f = await fixture(t, false), service = f.instance.initialization;
+  await service.complete({}, approveLocally, f.instance.signal());
+  const ready = { format: "ffa-pi/1", status: "ready" };
+  assert.deepEqual({ ...service.snapshot() }, ready);
+  assert.deepEqual({ ...await state(f.root) }, ready);
+  assert.deepEqual(f.providers.list(), []);
+  assert.deepEqual(f.providers.permissions.read(), { default: "ask", tools: {} });
+  assert.deepEqual(f.store.list("intent"), []);
+  assert.deepEqual(f.store.list("receipt"), []);
+  await assert.rejects(access(join(f.root, "providers/AGENTS.md")));
+  await f.instance.close();
+  await f.session.extensionRunner.emit({ type: "session_start" });
+  const tools = f.session.agent.state.tools;
+  assert.ok(tools.some(tool => tool.name === "ffa_agent"));
+  assert.ok(tools.some(tool => tool.name === "ffa_python"));
+  const status = tools.find(tool => tool.name === "ffa_status");
+  const result = await status.execute("status", {});
+  const { schema } = await import("../dist/common/validation.js");
+  assert.ok(schema(status.outputSchema)(result.structuredContent));
+  assert.deepEqual(result.structuredContent.workspace, ready);
+});
+
+for (const change of ["permissions", "provider", "documents", "cancel"]) {
+  test("initialization does not complete when " + change + " changes during confirmation", async t => {
+    const f = await fixture(t), signal = f.instance.signal(), confirmation = localConfirmation(signal);
+    await prepareWorkspace(f.root);
+    await writeFile(join(f.root, "providers/AGENTS.md"), "Provider index");
+    await mkdir(join(f.root, "providers/local"));
+    await writeFile(join(f.root, "providers/local/GUIDE.md"), "Provider guide");
+    const pending = f.instance.initialization.complete({}, confirmation.ask, signal);
+    const rejected = assert.rejects(pending);
+    const { dialog } = await confirmation.ready;
+    if (change === "permissions") await writeFile(join(f.root, ".ffa/permissions.json"), JSON.stringify({ default: "deny", tools: {} }));
+    if (change === "provider") f.store.put("provider", "local", { ...provider, command: "true" });
+    if (change === "documents") await writeFile(join(f.root, "AGENTS.md"), "");
+    if (change === "cancel") f.instance.cancelWork();
+    dialog.handleInput("\r");
+    await rejected;
+    assert.equal(f.instance.initialization.snapshot().status, "pending");
+    assert.equal((await state(f.root)).status, "pending");
+    assert.deepEqual(f.store.list("intent"), []);
+  });
+}
 
 test("pending workspace exposes initialization tools and structured call and read results", async t => {
   const f = await fixture(t), tools = mainTools(f.instance, f.instance, f.confirmations, f.bindRun);
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    "ffa_configure_provider", "ffa_discover_provider", "ffa_finish_initialization", "ffa_provider_call", "ffa_providers",
+    "ffa_finish_initialization", "ffa_provider_call", "ffa_provider_manage", "ffa_provider_record", "ffa_providers",
   ]);
   const call = tools.find(tool => tool.name === "ffa_provider_call");
   const value = await call.execute("local", { provider: "local", operation: "echo", parameters: { n: 1 } }, undefined, undefined, f.ctx);
   const { schema } = await import("../dist/common/validation.js");
   assert.ok(schema(call.outputSchema)(value.structuredContent));
   assert.deepEqual(value.structuredContent.data, { n: 1 });
-  const record = await call.execute("read", { record: { kind: "receipt", id: value.structuredContent.receiptId } }, undefined, undefined, f.ctx);
-  assert.ok(schema(call.outputSchema)(record.structuredContent));
+  const reader = tools.find(tool => tool.name === "ffa_provider_record");
+  const record = await reader.execute("read", { kind: "receipt", id: value.structuredContent.receiptId }, undefined, undefined, f.ctx);
+  assert.ok(schema(reader.outputSchema)(record.structuredContent));
   assert.deepEqual(JSON.parse(record.structuredContent.text).data, { n: 1 });
   assert.throws(() => f.instance.check(true));
 });

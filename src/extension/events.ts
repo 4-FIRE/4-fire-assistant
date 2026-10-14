@@ -31,7 +31,9 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
     instance.cancelWork();
     const role = instance.initialization.snapshot().status === "ready"
       ? await agentText("coordinator", instance.root) : await readFile(join(resourceRoot, "initialization.md"), "utf8");
+    const workspace = await readFile(join(resourceRoot, "prompts/workspace.md"), "utf8");
     instance.check();
+    event.systemPromptOptions.sections.ffa_workspace = workspace;
     event.systemPromptOptions.sections.ffa = "ffa 包内资料根目录：" + resourceRoot + "\n" + role;
   });
   pi.on("input", () => { lifecycle.active?.cancelWork(); });

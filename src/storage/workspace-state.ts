@@ -17,7 +17,7 @@ export async function state(root: string): Promise<WorkspaceState | undefined> {
     value = JSON.parse(await readFile(path, "utf8"));
   } catch { throw new Error("已有 .ffa 状态不可读取。不迁移、不覆盖；请使用新的独立工作区。"); }
   requireThat(object(value) && value.format === "ffa-pi/1" && ["pending", "ready"].includes(String(value.status)), "不支持此工作区格式；不迁移或覆盖旧状态。");
-  requireThat(value.status !== "ready" || typeof value.market === "string" && value.market.trim(), "就绪状态缺少市场。");
+  requireThat(!Object.hasOwn(value, "market") || typeof value.market === "string" && value.market.trim() && value.market.length <= 256, "工作区市场无效。");
   return new WorkspaceState(value as unknown as WorkspaceState);
 }
 export async function begin(root: string): Promise<WorkspaceState> {
@@ -28,6 +28,6 @@ export async function begin(root: string): Promise<WorkspaceState> {
   await atomicFile(join(root, ".ffa", "workspace.json"), JSON.stringify(initial) + "\n");
   return initial;
 }
-export async function saveReady(root: string, market: string) {
+export async function saveReady(root: string, market?: string) {
   await atomicFile(join(root, ".ffa", "workspace.json"), JSON.stringify({ format: "ffa-pi/1", status: "ready", market }) + "\n");
 }

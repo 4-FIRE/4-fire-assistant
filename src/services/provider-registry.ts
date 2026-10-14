@@ -3,33 +3,45 @@ import { toolId } from "../common/tool-id.js";
 import { requireThat, schema } from "../common/validation.js";
 import { Provider } from "../model/provider.js";
 import type { Operation } from "../model/provider.js";
-import type { Permission, Permissions } from "../model/permission.js";
+import type { ManagementRead, ManagementRequest, ManagementResult, ManagementConfirmation } from "../model/provider-management.js";
+import { ProviderRevisions, ProviderEditError, conflict, connectionConfig, editableOperation, operationVersion, editProvider } from "./provider-edits.js";
 import type { Observation } from "../model/receipt.js";
 import type { Store } from "../storage/store.js";
 import type { ProviderAccess } from "./provider-access.js";
 import { parseProvider, providerData } from "./provider-config.js";
-import { checkCatalogEdit, connectionData, mergeCatalog } from "./provider-catalog.js";
+import { mergeCatalog } from "./provider-catalog.js";
+
 import { PermissionService } from "./permission-service.js";
+
+export class ProviderDiscoveryError extends Error {}
 
 export class ProviderRegistry {
   #closed = false;
   readonly #editing = new Set<string>();
+  readonly #pending = new Set<Promise<unknown>>();
+  readonly #lifetime = new AbortController();
+  #closing: Promise<void> | undefined;
+  private async track<T>(work: Promise<T>): Promise<T> {
+    this.#pending.add(work);
+    try { return await work; } finally { this.#pending.delete(work); }
+  }
   readonly permissions: PermissionService;
   constructor(private readonly store: Store, private readonly access: ProviderAccess, root: string) {
     this.permissions = new PermissionService(root);
   }
   get notices() {
     return this.list().flatMap(provider => provider.kind === "mcp" && provider.discovery?.status !== "complete"
-      ? [provider.id + "：目录未完成发现，请调用 ffa_discover_provider。"] : []);
+      ? [provider.id + "：目录未完成发现，请使用 ffa_provider_manage 的 discover。"] : []);
   }
-  list() { return this.store.list<Provider>("provider").map(value => new Provider(value)); }
+  list() { requireThat(!this.#closed, "能力提供方已关闭。"); return this.store.list<Provider>("provider").map(value => new Provider(value)); }
   provider(id: string) {
+    requireThat(!this.#closed, "能力提供方已关闭。");
     const value = this.store.get<Provider>("provider", id);
     requireThat(value, "能力提供方未配置。"); return new Provider(value);
   }
   operation(id: string, name: string) {
     const op = this.provider(id).operations.find(op => op.name === name);
-    requireThat(op, "目录中没有此操作，请先发现完整能力。"); return op;
+    requireThat(op, "operation：目录中没有此操作；MCP 使用 discover，CLI 使用 update operations。"); return op;
   }
   catalog(id?: string, name?: string) {
     requireThat(!name || id, "查看单个操作时需要指定 provider。");
@@ -48,70 +60,199 @@ export class ProviderRegistry {
     requireThat(!this.#closed && !this.#editing.has(id), "能力提供方已关闭或正在配置、发现，请按顺序执行。");
     this.#editing.add(id);
   }
-  async configure(value: unknown, confirm: (provider: Provider, permissions: Permissions) => Promise<boolean>, signal?: AbortSignal,
-    proposed: Record<string, Permission> = {}) {
-    signal?.throwIfAborted();
-    const permissionsOnly = typeof value === "string";
-    const provider = permissionsOnly ? this.provider(value) : parseProvider(value);
-    this.permissions.proposals(provider.id, provider.operations.map(op => op.name), proposed);
-    this.lock(provider.id);
-    try {
-      const stored = this.store.get<Provider>("provider", provider.id), previous = stored ? new Provider(stored) : undefined;
-      if (!permissionsOnly) {
-        checkCatalogEdit(provider, previous);
-        if (provider.kind === "mcp" && previous && canonical(connectionData(provider)) !== canonical(connectionData(previous))) {
-          provider.operations = previous.operations.map(op => ({ ...op, available: false }));
-          provider.discovery = { status: "stale", at: previous.discovery?.at ?? "", scope: "连接已变化，旧目录仅供参考，必须重新发现。" };
-        }
+  readonly #revisions = new ProviderRevisions();
+
+  readManagement(request: ManagementRead) {
+    requireThat(!this.#closed, "能力提供方已关闭。");
+    const provider = this.provider(request.provider), base = { provider: provider.id, action: "read" as const, target: request.target };
+    const revision = (target: string, value: unknown) => this.#revisions.revision(`${provider.id}/${target}`, value);
+    switch (request.target) {
+      case "connection":
+        return { ...base, config: connectionConfig(provider), revision: revision("connection", connectionConfig(provider)),
+          state: { ...(provider.discovery ? { discovery: provider.discovery } : {}), limitations: this.notices.filter(notice => notice.startsWith(provider.id + "：")) } };
+      case "coverage":
+        requireThat(provider.kind === "cli", "target：coverage 仅用于 CLI。");
+        return { ...base, coverage: provider.coverage!, revision: revision("coverage", provider.coverage) };
+      case "operations": {
+        requireThat(provider.kind === "cli", "target：可编辑接口仅用于 CLI，MCP 请查询能力目录。");
+        const operations = request.operation ? [this.operation(provider.id, request.operation)] : provider.operations;
+        return { ...base, operations: operations.map(op => ({ definition: editableOperation(op),
+          revision: revision(`operations/${op.name}`, operationVersion(provider, op)) })),
+          coverage: { value: provider.coverage!, revision: revision("coverage", provider.coverage) } };
       }
-      await this.permissions.initialize();
-      const current = this.permissions.read(), next = structuredClone(current);
-      for (const op of provider.operations) {
-        const id = toolId(provider.id, op.name);
-        if (!Object.hasOwn(next.tools, id)) next.tools[id] = proposed[id] ?? current.default;
+      case "outcomes": {
+        const op = this.operation(provider.id, request.operation);
+        return { ...base, operation: op.name, outcomes: op.outcomes ?? null,
+          revision: revision(`outcomes/${op.name}`, operationVersion(provider, op)) };
       }
-      requireThat(await confirm(provider, next), "用户未确认配置。");
-      signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
-      if (permissionsOnly) {
-        requireThat(canonical(providerData(provider)) === canonical(providerData(this.provider(provider.id))), "确认期间能力目录已变化。");
-      } else {
-        await this.access.replace(provider);
-        signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
-      }
-      await this.permissions.addMissing(next.tools, current);
-      signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
-      if (!permissionsOnly) this.store.put("provider", provider.id, providerData(provider));
-    } finally { this.#editing.delete(provider.id); }
-    let discoveryError: string | undefined;
-    if (!permissionsOnly && provider.kind === "mcp") {
-      try { await this.discover(provider.id, signal); }
-      catch {
-        signal?.throwIfAborted();
-        requireThat(!this.#closed, "能力提供方已关闭。");
-        discoveryError = "连接已注册，目录发现失败；请修复连接并主动发现。";
+      case "permissions": {
+        const value = this.permissionView(provider);
+        return { ...base, ...value, revision: revision("permissions", { ...value, provider: providerData(provider) }) };
       }
     }
-    return { configured: provider.id, providers: this.catalog(provider.id), ...(discoveryError ? { discoveryError } : {}) };
   }
-  async discover(id: string, signal?: AbortSignal, refresh = true) {
+  private permissionView(provider: Provider) {
+    const config = this.permissions.read();
+    const explicit = Object.fromEntries(provider.operations.flatMap(op => {
+      const id = toolId(provider.id, op.name);
+      return Object.hasOwn(config.tools, id) ? [[op.name, config.tools[id]!]] : [];
+    }));
+    return { default: config.default, explicit, effective: Object.fromEntries(provider.operations.map(op =>
+      [op.name, Object.hasOwn(explicit, op.name) ? explicit[op.name]! : config.default])) };
+  }
+  private observeVersions(provider: Provider) {
+    this.#revisions.revision(`${provider.id}/connection`, connectionConfig(provider));
+    if (provider.kind === "cli") this.#revisions.revision(`${provider.id}/coverage`, provider.coverage);
+    for (const op of provider.operations) {
+      for (const target of ["operations", "outcomes"]) this.#revisions.revision(`${provider.id}/${target}/${op.name}`, operationVersion(provider, op));
+    }
+    this.#revisions.revision(`${provider.id}/permissions`, { ...this.permissionView(provider), provider: providerData(provider) });
+  }
+  manage(request: ManagementRequest, confirm: (value: ManagementConfirmation, recheck: () => Promise<void>, signal: AbortSignal) => Promise<boolean>, signal?: AbortSignal) {
+    return this.track(this.manageRequest(request, confirm, AbortSignal.any([this.#lifetime.signal, ...(signal ? [signal] : [])])));
+  }
+  private async manageRequest(request: ManagementRequest, confirm: (value: ManagementConfirmation, recheck: () => Promise<void>, signal: AbortSignal) => Promise<boolean>, signal: AbortSignal) {
+    signal.throwIfAborted();
+    requireThat(!this.#closed, "能力提供方已关闭。");
+    if (request.action === "read") return this.readManagement(request);
+    if (request.action === "discover") {
+      const result: ManagementResult = { provider: request.provider, action: "discover" };
+      await this.discoveryResult(result, signal); return result;
+    }
+    request = structuredClone(request);
+    this.lock(request.provider);
+    const result: ManagementResult = { provider: request.provider, action: request.action };
+    let stage = "prepare", writing = false;
+    try {
+      const stored = this.store.get<Provider>("provider", request.provider);
+      const previous = stored ? new Provider(stored) : undefined;
+      let next: Provider, cleared: string[] = [];
+      const permissionsOnly = request.action === "update" && request.target === "permissions";
+      const reconnect = request.action === "register" || request.target === "connection";
+      if (request.action === "register") {
+        requireThat(!previous, "provider：已注册，请读取后使用 update。");
+        requireThat(request.config.kind === "cli" || request.operations === undefined && request.coverage === undefined && request.permissions === undefined,
+          "config：MCP 注册只接受连接配置，不接受目录或初始权限。");
+        next = parseProvider({ ...request.config, id: request.provider, operations: request.operations ?? [],
+          ...(request.coverage ? { coverage: request.coverage } : {}) });
+        if (next.kind === "mcp") next.discovery = { status: "stale", at: "", scope: "连接已注册，尚未完成发现。" };
+      } else {
+        requireThat(previous, "provider：尚未注册。");
+        if (request.target === "permissions") {
+          this.#revisions.check(`${previous.id}/permissions`, { ...this.permissionView(previous), provider: providerData(previous) }, request.expectedRevision);
+          next = previous;
+        } else ({ next, cleared } = editProvider(previous, request, this.#revisions));
+      }
+      if (!permissionsOnly) result.configSaved = false;
+      if (reconnect && next.kind === "mcp") result.discovery = { status: "not_started", limitations: [] };
+      const changes = request.action === "register" ? request.permissions : request.target === "permissions" ? request.permissions : undefined;
+      if (changes) result.permissions = { status: "not_started", applied: {}, preserved: {} };
+      // Only an empty workspace may initialize its permission file. Existing workspaces fail closed.
+      if (!this.list().length) await this.permissions.initialize();
+      const current = this.permissions.read();
+      const plan = changes ? this.permissions.plan(next.id, next.operations.map(op => op.name), changes,
+        request.action === "update" && request.target === "permissions" ? request.mode : "suggest", current) : undefined;
+      const snapshot = canonical(previous ? providerData(previous) : null);
+      const recheck = () => {
+        signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
+        const actual = this.store.get<Provider>("provider", next.id);
+        if (canonical(actual ?? null) !== snapshot || canonical(this.permissions.read()) !== canonical(current)) conflict(next.id);
+      };
+      stage = "confirmation";
+      const accepted = await confirm({ action: request.action, ...(request.action === "update" ? { target: request.target } : {}),
+        provider: { ...next, operations: next.operations.map(op => ({ ...op })) }, clearedOutcomes: cleared,
+        permissions: { before: current, after: plan?.next ?? current, applied: plan?.applied ?? {}, preserved: plan?.preserved ?? {} } }, async () => recheck(), signal);
+      recheck();
+      if (!accepted) {
+        result.error = { category: "declined", path: "", message: "用户未确认本次变更。", next: "等待用户决定，不自动重试。" };
+        return result;
+      }
+      if (reconnect) {
+        stage = "connection"; await this.access.replace(next); recheck();
+      }
+      if (plan && result.permissions) {
+        stage = "permissions"; writing = true;
+        // A failed durable write cannot be inferred to have rolled back from current file contents.
+        result.permissions.status = "unknown";
+        await this.permissions.save(plan.next, current);
+        result.permissions = { status: "complete", applied: plan.applied, preserved: plan.preserved };
+        writing = false;
+      }
+      signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
+      if (canonical(this.store.get("provider", next.id) ?? null) !== snapshot ||
+          canonical(this.permissions.read()) !== canonical(plan?.next ?? current)) conflict(next.id);
+      if (!permissionsOnly) {
+        stage = "config"; writing = true; result.configSaved = null;
+        try { this.store.put("provider", next.id, providerData(next)); result.configSaved = true; }
+        catch (error) {
+          // SQLite statement failures are atomic; report false only if the prior value is still readable.
+          try { if (canonical(providerData(next)) !== snapshot && canonical(this.store.get("provider", next.id) ?? null) === snapshot) result.configSaved = false; } catch { /* unknown */ }
+          throw error;
+        }
+        writing = false;
+      }
+      this.observeVersions(next);
+      if (request.action === "update") {
+        const read: ManagementRead = request.target === "outcomes"
+          ? { action: "read", provider: next.id, target: "outcomes", operation: request.operation }
+          : { action: "read", provider: next.id, target: request.target };
+        result.saved = this.readManagement(read);
+      } else result.saved = this.readManagement({ action: "read", provider: next.id, target: "connection" });
+    } catch (error) {
+      signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
+      if (error instanceof ProviderEditError) result.error = error.failure;
+      else if (stage === "prepare" || stage === "confirmation") throw error;
+      else result.error = { category: writing || stage === "permissions" || stage === "config" ? "storage" : "connection",
+        path: stage, message: "本阶段未可靠完成；已完成的阶段不会自动回滚。", next: "读取对应状态并核对，不自动重复提交。" };
+    } finally { this.#editing.delete(request.provider); }
+    if (!result.error && result.discovery) {
+      await this.discoveryResult(result, signal);
+      result.saved = this.readManagement({ action: "read", provider: request.provider, target: "connection" });
+    }
+    return result;
+  }
+  private async discoveryResult(result: ManagementResult, signal?: AbortSignal) {
+    try {
+      await this.discover(result.provider, signal);
+      result.discovery = { status: "complete", limitations: ["仅包含当前连接和凭据可见的 MCP 工具。"] };
+    } catch (error) {
+      signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
+      if (!(error instanceof ProviderDiscoveryError)) {
+        if (result.configSaved === true || !this.store.healthy) {
+          delete result.discovery;
+          result.error = { category: "storage", path: "discovery", message: "发现阶段未可靠保存，不能作为普通远端失败处理。", next: "停止调用，核对存储和已注册配置；不要重复注册。" };
+          return;
+        }
+        throw error;
+      }
+      result.discovery = { status: "failed", limitations: ["连接仍已注册；旧目录保留，但不能发送。"] };
+      result.error = { category: "discovery", path: "discovery", message: "目录发现失败。", next: "连接和认证无须修改时使用 discover，不要重复注册。" };
+    }
+  }
+  discover(id: string, signal?: AbortSignal, refresh = true) {
+    return this.track(this.discoverCatalog(id, AbortSignal.any([this.#lifetime.signal, ...(signal ? [signal] : [])]), refresh));
+  }
+  private async discoverCatalog(id: string, signal: AbortSignal, refresh: boolean) {
+    signal.throwIfAborted();
     this.lock(id);
     try {
       const provider = this.provider(id);
-      requireThat(provider.kind === "mcp", "CLI 无统一发现协议，请依据完整能力提供方文档配置目录及覆盖缺口。");
+      requireThat(provider.kind === "mcp", "provider：CLI 目录请使用 update operations 维护。");
+      let next: Provider;
       try {
         const tools = await this.access.discover(provider, signal, refresh);
         signal?.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
-        const next = mergeCatalog(provider, tools);
-        const definitions = (value: Provider) => value.operations.map(op => ({ ...op })).sort((a, b) => a.name.localeCompare(b.name));
-        if (provider.discovery?.status !== "complete" || canonical(definitions(provider)) !== canonical(definitions(next))) {
-          this.store.put("provider", id, providerData(next));
-        }
+        next = mergeCatalog(provider, tools);
       } catch (error) {
-        if (!this.#closed) {
-          provider.discovery = { status: "failed", at: provider.discovery?.at ?? "", scope: "发现失败；旧目录保留，但不能作为当前完整目录使用。" };
-          this.store.put("provider", id, providerData(provider));
-        }
-        throw error;
+        signal.throwIfAborted(); requireThat(!this.#closed, "能力提供方已关闭。");
+        provider.discovery = { status: "failed", at: provider.discovery?.at ?? "", scope: "发现失败；旧目录保留，但不能发送。" };
+        this.store.put("provider", id, providerData(provider));
+        throw new ProviderDiscoveryError("MCP 目录发现失败。", { cause: error });
+      }
+      const definitions = (value: Provider) => value.operations.map(op => ({ ...op })).sort((a, b) => a.name.localeCompare(b.name));
+      if (provider.discovery?.status !== "complete" || canonical(definitions(provider)) !== canonical(definitions(next))) {
+        this.store.put("provider", id, providerData(next));
+        this.observeVersions(next);
       }
       return this.catalog(id)[0]!;
     } finally { this.#editing.delete(id); }
@@ -160,7 +301,15 @@ export class ProviderRegistry {
     };
     return this.access.invoke(provider, op, parameters, preview, gate, signal);
   }
-  async close() { this.#closed = true; await this.access.close(); }
+  close(): Promise<void> {
+    if (this.#closing) return this.#closing;
+    this.#closed = true; this.#lifetime.abort(); this.#revisions.clear();
+    this.#closing = (async () => {
+      try { await this.access.close(); }
+      finally { await Promise.allSettled([...this.#pending]); }
+    })();
+    return this.#closing;
+  }
 }
 export function classify(observation: Observation, operation: Pick<Operation, "outcomes">): "accepted" | "rejected" | "unknown" {
   if (!observation.success) return "unknown";

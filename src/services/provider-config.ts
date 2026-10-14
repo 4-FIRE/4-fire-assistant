@@ -26,7 +26,7 @@ const providerSchema = schema({ type: "object", additionalProperties: false,
       } } }
   } });
 export function parseProvider(value: unknown): Provider {
-  requireThat(providerSchema(value), "能力提供方配置无效。凭据只能引用 ${ENV_NAME}。");
+  requireThat(providerSchema(value), "配置字段无效；请按可编辑契约提交，凭据只能引用 ${ENV_NAME}。");
   const provider = structuredClone(value) as Provider;
   requireThat(Boolean(provider.command) !== Boolean(provider.url), "能力提供方必须指定 command 或 url，不能同时指定。");
   if (provider.command) {
@@ -41,16 +41,18 @@ export function parseProvider(value: unknown): Provider {
   requireThat(!provider.command || !provider.headers, "本地能力提供方不接受 headers。");
   if (provider.kind === "cli") {
     requireThat(provider.command && !provider.args && !provider.url, "CLI 需要 command；不接受能力提供方级 args。");
-    requireThat(provider.coverage?.basis.trim(), "CLI 目录需要资料依据和覆盖缺口。");
+    requireThat(provider.coverage?.basis.trim(), "coverage.basis：CLI 目录需要资料依据和覆盖缺口。");
+    requireThat(provider.discovery === undefined, "discovery：CLI 不接受 MCP 发现状态。");
   }
   const names = new Set<string>();
-  for (const op of provider.operations) {
+  for (const [index, op] of provider.operations.entries()) {
     requireThat(!names.has(op.name), "操作名重复。"); names.add(op.name);
     requireThat(op.inputSchema.type === "object", "输入 schema 必须约束对象。");
     schema(op.inputSchema);
     if (op.outcomes) { schema(op.outcomes.accepted); schema(op.outcomes.rejected); }
     if (provider.kind === "cli") {
-      requireThat(op.available === false || op.argv, "可调用 CLI 操作需要 argv。");
+      requireThat(op.native === undefined, `operations[${index}].native：CLI 不接受 MCP 原生定义。`);
+      requireThat(op.available === false || op.argv, `operations[${index}].argv：可调用 CLI 操作需要参数绑定。`);
       if (!op.argv) continue;
       const whole = op.stdin || op.argv.some(token => object(token) && "json" in token);
       const properties = object(op.inputSchema.properties) ? op.inputSchema.properties : {};

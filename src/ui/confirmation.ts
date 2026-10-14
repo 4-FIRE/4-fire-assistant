@@ -26,13 +26,14 @@ export class ConfirmationDialog implements Component {
   ) {
     this.details = new Text(summary ?? text, 0, 0);
     this.scroll = new ScrollView(this.details, { overscroll: "contain" });
-    this.choices = new SelectList([{ value: "cancel", label: "取消" }, { value: "allow", label: "确认" }], 2, {
+    this.choices = new SelectList([{ value: "allow", label: "确认" }, { value: "cancel", label: "取消" }], 2, {
       selectedPrefix: text => theme.fg("accent", text),
       selectedText: text => theme.fg("accent", text),
       description: text => theme.fg("muted", text),
       scrollInfo: text => theme.fg("dim", text),
       noMatch: text => theme.fg("dim", text),
     });
+    this.choices.setSelectedIndex(0);
     this.choices.onSelect = item => this.finish(item.value === "allow");
     this.choices.onCancel = () => this.finish(false);
     signal?.addEventListener("abort", this.abort, { once: true });
@@ -70,8 +71,8 @@ export class ConfirmationDialog implements Component {
       ...visible,
       this.theme.fg("dim", truncateToWidth(`${start + 1}–${Math.min(start + viewport, content.length)} / ${content.length}`, innerWidth)),
       ...this.choices.render(innerWidth),
-      this.theme.fg("dim", truncateToWidth("↑↓滚动 PgUp/PgDn翻页", innerWidth)),
-      this.theme.fg("dim", truncateToWidth("Tab切换 Enter选 Esc取消", innerWidth)),
+      this.theme.fg("dim", truncateToWidth("↑↓滚动详情 PgUp/PgDn翻页", innerWidth)),
+      this.theme.fg("dim", truncateToWidth("Tab切换选项 Enter选 Esc取消", innerWidth)),
       ...(this.summary === undefined ? [] : [this.theme.fg("dim", truncateToWidth(this.showingRaw ? "D 查看摘要" : "D 查看完整配置", innerWidth))]),
     ];
     const border = (text: string) => this.theme.fg("accent", text);
@@ -100,7 +101,7 @@ export class ConfirmationDialog implements Component {
     else if (matchesKey(data, "home")) this.scroll.scrollToStart();
     else if (matchesKey(data, "end")) this.scroll.scrollToEnd();
     else if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) {
-      this.choices.setSelectedIndex(this.choices.getSelectedItem()?.value === "cancel" ? 1 : 0);
+      this.choices.setSelectedIndex(this.choices.getSelectedItem()?.value === "cancel" ? 0 : 1);
     } else if (this.keys.matches(data, "tui.select.confirm")) this.finish(this.choices.getSelectedItem()?.value === "allow");
     this.requestRender();
   }
@@ -109,7 +110,7 @@ export class ConfirmationDialog implements Component {
 export async function ask(ctx: ExtensionContext, title: string, value: unknown, signal?: AbortSignal, summary?: string): Promise<boolean> {
   requireThat(ctx.hasUI, "此操作需要用户确认通道，非交互模式不能授权。");
   signal?.throwIfAborted();
-  const text = JSON.stringify(value, null, 2);
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   // RPC clients own their layout. Keep the complete payload separate from the title.
   const allowed = ctx.mode === "tui"
     ? await ctx.ui.custom<boolean>((tui, theme, keys, done) => new ConfirmationDialog(

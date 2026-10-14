@@ -15,12 +15,16 @@ const cli = { id: "local", kind: "cli", coverage: { basis: "Local CLI contract",
 test("old tool references cannot access a reopened workspace instance", async t => {
   const { session } = await host(t, "ready", [cli]);
   const old = session.agent.state.tools.find(tool => tool.name === "ffa_provider_call");
+  const oldRead = session.agent.state.tools.find(tool => tool.name === "ffa_provider_record");
+  const oldManage = session.agent.state.tools.find(tool => tool.name === "ffa_provider_manage");
   const first = await old.execute("first", { provider: "local", operation: "echo", parameters: { n: 1 } });
   assert.equal(first.structuredContent.success, true);
   await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" });
   await assert.rejects(old.execute("closed", { provider: "local", operation: "echo", parameters: {} }));
   await session.extensionRunner.emit({ type: "session_start" });
   await assert.rejects(old.execute("reopened", { provider: "local", operation: "echo", parameters: {} }));
+  await assert.rejects(oldRead.execute("reopened", { kind: "intent", id: first.structuredContent.intentId }));
+  await assert.rejects(oldManage.execute("reopened", { action: "read", provider: "local", target: "connection" }));
   const fresh = session.agent.state.tools.find(tool => tool.name === "ffa_provider_call");
   const next = await fresh.execute("fresh", { provider: "local", operation: "echo", parameters: { n: 2 } });
   assert.equal(next.structuredContent.success, true);
@@ -48,7 +52,7 @@ test("workspace shutdown waits for a cancelled external call to save its unknown
     const intent = JSON.parse(db.prepare("SELECT value FROM records WHERE kind='intent' AND id=?").get(result.structuredContent.intentId).value);
     assert.equal(intent.state, "unknown"); assert.ok(intent.attempt);
   } finally { db.close(); }
-  await assert.rejects(call.execute("closed", { record: { kind: "intent", id: result.structuredContent.intentId } }));
+  await assert.rejects(call.execute("closed", { provider: "local", operation: "write", parameters: {} }));
 });
 
 test("source-loaded Python tools retain package library access after module moves", async t => {

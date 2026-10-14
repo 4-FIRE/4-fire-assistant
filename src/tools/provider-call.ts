@@ -1,40 +1,26 @@
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { json, type Params } from "../common/json.js";
-import { requireThat } from "../common/validation.js";
+import { requireThat, schema } from "../common/validation.js";
 import type { ExecutionService } from "../services/execution-service.js";
-import type { RecordService } from "../services/record-service.js";
 import type { Confirmations } from "../ui/confirmation.js";
 import type { CallAccess } from "./access.js";
 import { name, params } from "./schemas/input.js";
 import { result } from "./result.js";
 
-export function providerCallTool(service: Pick<ExecutionService, "call">, records: Pick<RecordService, "read">,
-  access: CallAccess, confirmations: Confirmations) {
+const callInput = Type.Object({ provider: name, operation: name, parameters: params }, { additionalProperties: false });
+const validCall = schema(callInput);
+export function providerCallTool(service: Pick<ExecutionService, "call">, access: CallAccess, confirmations: Confirmations) {
   return defineTool({
     name: "ffa_provider_call", label: "调用能力提供方",
-    description: "调用或读取记录，两种输入互斥。调用使用 provider、operation、parameters：allow 直接发送；ask/review 请求本次用户批准；deny 拒绝。review 的方案独立复核由助手事先组织，程序不核验。返回 intentId、receiptId 和状态；未知结果不得自动重发。读取使用 record={kind,id,offset?,limit?}，不会发送。大结果用同一工具读取完整记录。",
-    outputSchema: Type.Union([
-      Type.Object({ intentId: Type.String(), provider: Type.String(), operation: Type.String(), permission: Type.Union([Type.Literal("allow"), Type.Literal("ask"), Type.Literal("review")]),
+    description: "发送一次显式业务调用，必须提交 provider、原生 operation 和完整 parameters（无参数为 {}）。参数定义用 ffa_providers 查询；allow 直接发送，ask/review 请求本次批准，deny 拒绝。未知结果不等于未发送，不自动重发；用 ffa_provider_record 读取 intentId/receiptId 核对。success 不证明业务完成或成交。",
+    outputSchema: Type.Object({ intentId: Type.String(), provider: Type.String(), operation: Type.String(), permission: Type.Union([Type.Literal("allow"), Type.Literal("ask"), Type.Literal("review")]),
         state: Type.Union(["declined", "observed", "unknown"].map(value => Type.Literal(value))),
         receiptId: Type.Optional(Type.String()), outcome: Type.Optional(Type.Union(["accepted", "rejected", "unknown"].map(value => Type.Literal(value)))),
         success: Type.Boolean(), data: Type.Unknown(), truncated: Type.Optional(Type.Boolean()) }),
-      Type.Object({ text: Type.String(), nextOffset: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]) }),
-    ]),
-    parameters: Type.Union([
-      Type.Object({ provider: name, operation: name, parameters: params }, { additionalProperties: false }),
-      Type.Object({ record: Type.Object({ kind: Type.Union([Type.Literal("receipt"), Type.Literal("intent")]), id: name,
-        offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 16000 })) },
-      { additionalProperties: false }) }, { additionalProperties: false }),
-    ]),
+    parameters: callInput,
     async execute(_id, args, signal, _update, ctx) {
-      access.check();
-      if ("record" in args) {
-        const { kind, id, offset = 0, limit = 16000 } = args.record;
-        const text = JSON.stringify(records.read(kind, id));
-        requireThat(offset <= text.length, "分页位置超出记录。");
-        return result({ text: text.slice(offset, offset + limit), nextOffset: offset + limit < text.length ? offset + limit : null });
-      }
+      access.check(); requireThat(validCall(args), "调用只接受 provider、operation、parameters；读取记录使用 ffa_provider_record。");
       const cancel = access.signal(signal);
       const intent = await service.call(access.scope(ctx.sessionManager.getSessionId()), args.provider, args.operation, json(args.parameters) as Params,
         (value, recheck) => confirmations.ask(ctx, "批准本次工具调用", value, cancel, undefined, recheck), cancel);

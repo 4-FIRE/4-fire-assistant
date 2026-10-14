@@ -29,7 +29,7 @@ export default function ffa(pi: ExtensionAPI) {
       const execution = new ExecutionService(providers, store);
       if (current.status === "ready") providers.permissions.read();
       return new WorkspaceInstance(root, store, providers, execution,
-        new InitializationService(root, current, store, providers), new ResearchService(root, store),
+        new InitializationService(root, current, providers), new ResearchService(root, store),
         new RecordService(store), new AgentService(execution), new WorkspaceUpdateService(root, store));
     } catch (error) { store.close(); throw error; }
   }, instance => registry.register(mainTools(instance, instance, confirmations,

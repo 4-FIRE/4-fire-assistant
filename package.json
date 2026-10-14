@@ -1,8 +1,8 @@
 {
   "name": "4-fire-assistant",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
-  "description": "Workspace-scoped investment tools and skills for Pi",
+  "description": "Workspace-scoped collaboration for learning, project work, research, and decision support in Pi, with investment analysis and controlled trading capabilities",
   "type": "module",
   "keywords": [
     "pi-package"

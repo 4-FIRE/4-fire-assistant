@@ -11,7 +11,7 @@ export function statusTool(workspace: Pick<InitializationService, "snapshot">, e
   providers: Pick<ProviderRegistry, "notices">, access: CallAccess) {
   return defineTool({
     name: "ffa_status", label: "工作区状态", description: "查看初始化状态和本工作区待核对变更。不会执行或重发。",
-    outputSchema: Type.Object({ workspace: Type.Object({ format: Type.Literal("ffa-pi/1"), status: Type.Literal("ready"), market: Type.String() }),
+    outputSchema: Type.Object({ workspace: Type.Object({ format: Type.Literal("ffa-pi/1"), status: Type.Literal("ready"), market: Type.Optional(Type.String()) }),
       unresolved: Type.Array(intentOutput), notices: Type.Array(Type.String()) }),
     parameters: Type.Object({}),
     async execute() {

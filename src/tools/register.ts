@@ -14,8 +14,8 @@ import type { Confirmations } from "../ui/confirmation.js";
 import type { CallAccess } from "./access.js";
 import { providersTool } from "./providers.js";
 import { providerCallTool } from "./provider-call.js";
-import { configureProviderTool } from "./configure-provider.js";
-import { discoverProviderTool } from "./discover-provider.js";
+import { providerManageTool } from "./provider-manage.js";
+import { providerRecordTool } from "./provider-record.js";
 import { finishInitializationTool } from "./finish-initialization.js";
 import { pythonTool } from "./python.js";
 import { statusTool } from "./status.js";
@@ -27,8 +27,8 @@ export interface ToolServices {
 }
 export function mainTools(services: ToolServices, access: CallAccess, confirmations: Confirmations, run: BindAgentRun): ToolDefinition[] {
   const { providers, execution, initialization, research, records, agents } = services;
-  const tools: ToolDefinition[] = [providersTool(providers, access), providerCallTool(execution, records, access, confirmations),
-    configureProviderTool(providers, access, confirmations), discoverProviderTool(providers, access)];
+  const tools: ToolDefinition[] = [providersTool(providers, access), providerCallTool(execution, access, confirmations),
+    providerManageTool(providers, access, confirmations), providerRecordTool(records, access)];
   if (initialization.snapshot().status === "pending") {
     tools.push(finishInitializationTool(initialization, access, confirmations));
   } else {
@@ -44,7 +44,7 @@ export class ToolRegistry {
     const promptGuidelines = readFileSync(join(resourceRoot, "prompts/tool-guidelines.md"), "utf8")
       .trim().split(/\r?\n\s*\r?\n/);
     for (const definition of tools) {
-      const tool = { ...definition, namespace: { name: "ffa", description: "工作区：能力提供方、研究、专家与受控变更。" },
+      const tool = { ...definition, namespace: { name: "ffa", description: "工作区协作：学习与知识积累、任务与项目推进、研究与决策支持；提供能力接入、计算、专家协作与受控调用。" },
         promptGuidelines };
       this.#registered.set(tool.name, tool); this.pi.registerTool(tool);
     }

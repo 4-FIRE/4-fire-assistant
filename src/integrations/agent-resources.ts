@@ -37,7 +37,8 @@ export async function agentLoader(root: string, agent: string): Promise<Resource
     try { context.push({ path: join(root, path), content: await readFile(join(root, path), "utf8") }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
-  const prompt = "ffa 包内资料根目录：" + resourceRoot + "\n" + await agentText(agent, root) +
+  const workspace = await readFile(join(resourceRoot, "prompts/workspace.md"), "utf8");
+  const prompt = "ffa 包内资料根目录：" + resourceRoot + "\n" + workspace + "\n\n" + await agentText(agent, root) +
     "\n\n默认向协调者交回报告、依据、缺口和产物引用。仅用户指令要求修改资料时，才直接修改相应资料；委派不能扩大用户授权。" +
     "\n基础工具不是沙箱。业务调用与记录读取使用 ffa_provider_call，不借 Bash、Python 或文件工具绕过权限、批准和账本。" +
     "\n内部状态通过专用入口维护。职责补充不能放宽以上边界。不创建子专家；复核报告不授予执行许可。";

@@ -30,11 +30,17 @@ export class PermissionService {
     const config = this.read(), id = toolId(provider, operation);
     return Object.hasOwn(config.tools, id) ? config.tools[id]! : config.default;
   }
-  proposals(provider: string, names: string[], proposed: Record<string, Permission>) {
-    for (const [id, value] of Object.entries(proposed)) {
-      requireThat(names.some(name => toolId(provider, name) === id) && permission.enum.includes(value), "权限建议只能包含当前能力提供方的已知工具。");
+  plan(provider: string, names: string[], changes: Record<string, Permission | null>, mode: "suggest" | "set", current: Permissions) {
+    const next = structuredClone(current), applied: Record<string, Permission | null> = {}, preserved: Record<string, Permission> = {};
+    for (const [name, value] of Object.entries(changes)) {
+      requireThat(names.includes(name) && (permission.enum.includes(value as string) || mode === "set" && value === null), "permissions：只能修改当前提供方已知操作的权限。");
+      const id = toolId(provider, name);
+      if (mode === "suggest" && Object.hasOwn(current.tools, id)) { Object.defineProperty(preserved, name, { value: current.tools[id], enumerable: true }); continue; }
+      if (value === null) delete next.tools[id];
+      else next.tools[id] = value;
+      Object.defineProperty(applied, name, { value, enumerable: true });
     }
-    return proposed;
+    return { next, applied, preserved };
   }
   async initialize() {
     try {
@@ -43,16 +49,11 @@ export class PermissionService {
       throw new Error("无法初始化工具权限；接入已停止。");
     }
   }
-  async addMissing(proposed: Record<string, Permission>, expected: Permissions) {
-    const config = this.read();
-    requireThat(canonical(config) === canonical(expected), "确认期间权限配置已变化，请重新配置。");
-    for (const [id, value] of Object.entries(proposed)) if (!Object.hasOwn(config.tools, id)) config.tools[id] = value;
-    if (canonical(config) !== canonical(expected)) {
-      try {
-        await this.#file.write(JSON.stringify(config, null, 2) + "\n"); this.read();
-      } catch {
-        throw new Error("无法保存工具权限；接入已停止。");
-      }
+  async save(next: Permissions, expected: Permissions) {
+    requireThat(canonical(this.read()) === canonical(expected), "确认期间权限配置已变化，请重新读取。");
+    if (canonical(next) !== canonical(expected)) {
+      await this.#file.write(JSON.stringify(next, null, 2) + "\n");
+      requireThat(canonical(this.read()) === canonical(next), "权限写入后状态已变化。");
     }
   }
 }

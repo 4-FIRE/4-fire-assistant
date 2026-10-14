@@ -71,7 +71,7 @@ export class Lifecycle {
     try { this.register(instance); }
     catch (error) { await this.close(); throw error; }
   }
-  async start(root: string, confirm: (value: unknown, continuing: boolean) => Promise<boolean>) {
+  async start(root: string, confirm: (value: { root: string }, continuing: boolean) => Promise<boolean>) {
     const initial = await startInitialization(await realpath(root), confirm);
     await this.open(root, initial);
   }

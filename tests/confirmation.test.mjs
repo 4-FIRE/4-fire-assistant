@@ -66,7 +66,6 @@ test("short confirmation fits its content after wrapping and terminal resize", (
 test("small height budget blocks approval even when the terminal has eight rows", () => {
   const { component, decisions, resize } = dialog("{}");
   component.render(80);
-  component.handleInput("\t");
   resize(8);
   assert.ok(component.render(80).length <= Math.floor(8 * 0.7));
   component.handleInput("\r");
@@ -77,15 +76,16 @@ test("small height budget blocks approval even when the terminal has eight rows"
   assert.deepEqual(decisions, [false]);
 });
 
-test("scrolling cannot select approval; approval requires explicit selection", () => {
+test("approval is selected by default; scrolling does not approve and Tab selects cancellation", () => {
   const cancelled = dialog("{} ");
   cancelled.component.render(80);
   cancelled.component.handleInput("\x1b[B");
+  assert.deepEqual(cancelled.decisions, []);
+  cancelled.component.handleInput("\t");
   cancelled.component.handleInput("\r");
   assert.deepEqual(cancelled.decisions, [false]);
   const allowed = dialog("{}");
   allowed.component.render(80);
-  allowed.component.handleInput("\t");
   allowed.component.handleInput("\r");
   allowed.component.handleInput("\r");
   assert.deepEqual(allowed.decisions, [true]);
@@ -96,7 +96,6 @@ test("abort, escape, and a terminal too small cannot authorize", () => {
     const controller = new AbortController();
     const { component, decisions, resize } = dialog("{}", controller.signal);
     component.render(80);
-    component.handleInput("\t");
     if (action === "abort") controller.abort();
     else if (action === "escape") component.handleInput("\x1b");
     else {
@@ -114,7 +113,7 @@ test("abort, escape, and a terminal too small cannot authorize", () => {
   assert.deepEqual(dialog("{}", controller.signal).decisions, [false]);
 });
 
-test("provider summary can switch to complete raw data without hiding actions or keeping approval selected", () => {
+test("provider summary can switch to complete raw data without hiding actions and restores default approval", () => {
   const value = { operations: Array.from({ length: 40 }, (_, index) => ({ name: `op_${index}`, inputSchema: { type: "object" } })) };
   const raw = JSON.stringify(value, null, 2);
   const summary = "op_0()\nop_1()";
@@ -136,5 +135,5 @@ test("provider summary can switch to complete raw data without hiding actions or
   component.handleInput("d");
   assert.deepEqual(component.render(80), first);
   component.handleInput("\r");
-  assert.deepEqual(decisions, [false]);
+  assert.deepEqual(decisions, [true]);
 });

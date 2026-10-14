@@ -11,7 +11,7 @@ import { ProviderRegistry } from "../dist/services/provider-registry.js";
 import { ExecutionService } from "../dist/services/execution-service.js";
 import { Ledger } from "../dist/services/execution-ledger.js";
 import { parseProvider, providerData } from "../dist/services/provider-config.js";
-import { mergeCatalog, checkCatalogEdit } from "../dist/services/provider-catalog.js";
+import { mergeCatalog } from "../dist/services/provider-catalog.js";
 import { toolId } from "../dist/common/tool-id.js";
 import { localConfirmation, approveLocally } from "./helpers/local-confirmation.mjs";
 
@@ -50,7 +50,8 @@ test("CLI command names persist unchanged and execute through each workspace's h
     await mkdir(bin);
     await symlink("/usr/bin/printf", join(bin, "local-printf"));
     process.env.PATH = bin + ":/usr/bin:/bin";
-    await f.providers.configure(provider, approveLocally, undefined, { "portable/print": "allow" });
+    await f.providers.manage({ action: "register", provider: provider.id, config: { kind: "cli", command: provider.command },
+      coverage: provider.coverage, operations: provider.operations, permissions: { print: "allow" } }, approveLocally);
     assert.equal(f.store.get("provider", "portable").command, "local-printf");
     assert.equal(f.providers.preview("portable", "print", {}).command, "local-printf");
     const result = await f.execution.call(scope, "portable", "print", { value: 42 });
@@ -68,7 +69,7 @@ test("CLI changes to PATH, executable target or availability during approval nev
       const executable = join(bin, "local-printf");
       await symlink("/usr/bin/printf", executable);
       process.env.PATH = bin + ":/usr/bin:/bin";
-      await f.providers.configure({ id: "portable", kind: "cli", command: "local-printf",
+      await f.providers.manage({ action: "register", provider: "portable", config: { kind: "cli", command: "local-printf" },
         coverage: { basis: "printf(1)", limitations: [] },
         operations: [{ name: "print", description: "Print JSON", inputSchema: { type: "object" }, argv: ["%s", { json: true }] }] },
       approveLocally);
@@ -80,7 +81,7 @@ test("CLI changes to PATH, executable target or availability during approval nev
         await rm(executable);
         if (change === "target") await symlink("/usr/bin/tee", executable);
       }
-      dialog.handleInput("\t"); dialog.handleInput("\r");
+      dialog.handleInput("\r");
       await rejected;
       assert.equal(f.execution.get(value.intentId).attempt, undefined);
       assert.equal(f.store.list("receipt").length, 0);
@@ -95,9 +96,10 @@ test("missing and non-executable CLI commands cannot register; stored absolute c
   process.env.PATH = bin;
   const provider = { id: "blocked", kind: "cli", command: "not-installed", coverage: { basis: "Local availability check", limitations: [] },
     operations: [{ name: "run", description: "", inputSchema: { type: "object", additionalProperties: false }, argv: [] }] };
-  await assert.rejects(f.providers.configure(provider, approveLocally));
+  const request = { action: "register", provider: provider.id, config: { kind: "cli", command: provider.command }, coverage: provider.coverage, operations: provider.operations };
+  assert.equal((await f.providers.manage(request, approveLocally)).error.category, "connection");
   await writeFile(join(bin, "not-executable"), "not executable", { mode: 0o600 });
-  await assert.rejects(f.providers.configure({ ...provider, command: "not-executable" }, approveLocally));
+  assert.equal((await f.providers.manage({ ...request, config: { kind: "cli", command: "not-executable" } }, approveLocally)).error.category, "connection");
   assert.equal(f.store.get("provider", "blocked"), undefined);
   f.store.put("provider", "notes", { ...f.provider, command: "/usr/bin/tee" });
   await assert.rejects(f.execution.call(scope, "notes", "append", { file: join(f.root, "unsent"), note: "local" }, approveLocally));
@@ -120,22 +122,12 @@ test("catalog preserves all native definitions and availability without granting
   assert.throws(() => mergeCatalog(first, [definition, definition]));
 });
 
-test("catalog edits cannot invent discovery, omit tools or alter native definitions", () => {
-  const discovered = mergeCatalog(parseProvider(connection), [definition, { ...definition, name: "other" }]);
-  assert.throws(() => checkCatalogEdit(discovered, undefined));
-  const edited = providerData(discovered); edited.operations.pop();
-  assert.throws(() => checkCatalogEdit(parseProvider(edited), discovered));
-  const altered = providerData(discovered); altered.operations[0].native.outputSchema = { type: "string" };
-  assert.throws(() => checkCatalogEdit(parseProvider(altered), discovered));
-  assert.throws(() => parseProvider({ ...connection, operations: [{ ...discovered.operations[0], unknownField: true }] }));
-});
-
 test("automatic discovery failure preserves the confirmed connection and old directory", { timeout: 10_000 }, async t => {
   const f = await fixture(t);
-  const result = await f.providers.configure(connection, approveLocally);
-  assert.equal(result.configured, "catalog");
-  assert.equal(result.providers[0].discovery.status, "failed");
-  assert.equal(typeof result.discoveryError, "string");
+  const result = await f.providers.manage({ action: "register", provider: "catalog", config: { kind: "mcp", command: "/usr/bin/false" } }, approveLocally);
+  assert.equal(result.configSaved, true);
+  assert.equal(result.discovery.status, "failed");
+  assert.equal(result.error.category, "discovery");
   const known = mergeCatalog(parseProvider(connection), [definition]);
   f.store.put("provider", "catalog", providerData(known));
   await assert.rejects(f.providers.discover("catalog"));
@@ -150,8 +142,10 @@ test("automatic discovery failure preserves the confirmed connection and old dir
 test("changed MCP connection retains old tools as unavailable after automatic discovery fails", async t => {
   const f = await fixture(t), known = mergeCatalog(parseProvider(connection), [definition]);
   f.store.put("provider", known.id, providerData(known));
-  const result = await f.providers.configure({ ...connection, args: ["changed"] }, approveLocally);
-  assert.equal(result.providers[0].discovery.status, "failed");
+  const read = f.providers.readManagement({ action: "read", provider: "catalog", target: "connection" });
+  const result = await f.providers.manage({ action: "update", provider: "catalog", target: "connection", expectedRevision: read.revision,
+    config: { ...read.config, args: ["changed"] } }, approveLocally);
+  assert.equal(result.discovery.status, "failed");
   const next = f.providers.provider(known.id);
   assert.equal(next.operations.length, 1);
   assert.equal(next.operations[0].available, false);
@@ -162,58 +156,6 @@ test("tool IDs encode separators and keep provider identities distinct", () => {
   assert.equal(toolId("qmt", "submit_order"), "qmt/submit_order");
   assert.equal(toolId("qmt", "a/b%"), "qmt/a%2Fb%25");
   assert.notEqual(toolId("one", "a/b"), toolId("two", "a/b"));
-});
-
-test("configuration adds initial rules after approval and preserves user rules", async t => {
-  const f = await fixture(t);
-  await f.setPermission("deny");
-  await f.providers.configure(f.provider, approveLocally, undefined, { "notes/append": "allow" });
-  assert.equal(f.providers.permission("notes", "append"), "deny");
-  const other = { ...f.provider, id: "other" }, confirmation = localConfirmation();
-  const pending = f.providers.configure(other, confirmation.ask, undefined, { "other/append": "review" });
-  const { dialog, value } = await confirmation.ready;
-  assert.equal(value.operations[0].name, "append");
-  assert.equal(f.providers.permission("other", "append"), "ask");
-  dialog.handleInput("\t"); dialog.handleInput("\r"); await pending;
-  assert.equal(f.providers.permission("other", "append"), "review");
-  assert.equal(f.providers.permission("notes", "append"), "deny");
-  const rejected = { ...f.provider, id: "rejected" }, cancel = localConfirmation();
-  const attempt = f.providers.configure(rejected, cancel.ask, undefined, { "rejected/append": "allow" });
-  (await cancel.ready).dialog.handleInput("\r"); await assert.rejects(attempt);
-  assert.equal(f.providers.permissions.read().tools["rejected/append"], undefined);
-  await assert.rejects(f.providers.configure(other, approveLocally, undefined, { "notes/append": "allow" }));
-});
-
-test("ID-only permissions use the registered directory and retain connection and existing rules", async t => {
-  const f = await fixture(t);
-  const before = providerData(f.providers.provider("notes"));
-  const confirmation = localConfirmation();
-  const pending = f.providers.configure("notes", confirmation.ask, undefined, { "notes/append": "review" });
-  const { dialog } = await confirmation.ready;
-  assert.equal(f.providers.permissions.read().tools["notes/append"], undefined);
-  dialog.handleInput("\t"); dialog.handleInput("\r"); await pending;
-  assert.deepEqual(providerData(f.providers.provider("notes")), before);
-  assert.equal(f.providers.permission("notes", "append"), "review");
-  await f.providers.configure("notes", approveLocally, undefined, { "notes/append": "allow" });
-  assert.equal(f.providers.permission("notes", "append"), "review");
-  await assert.rejects(f.providers.configure("notes", approveLocally, undefined, { "other/append": "allow" }));
-});
-
-test("configuration rejects changed permissions or directory during confirmation", async t => {
-  const f = await fixture(t);
-  for (const action of ["permissions", "directory"]) {
-    await writeFile(f.config, '{"default":"ask","tools":{}}');
-    const confirmation = localConfirmation();
-    const pending = f.providers.configure("notes", confirmation.ask, undefined, { "notes/append": "allow" });
-    const { dialog } = await confirmation.ready;
-    if (action === "permissions") await f.setPermission("deny");
-    else {
-      const changed = providerData(f.providers.provider("notes")); changed.operations[0].description = "Changed";
-      f.store.put("provider", "notes", changed);
-    }
-    dialog.handleInput("\t"); dialog.handleInput("\r"); await assert.rejects(pending);
-    assert.notEqual(f.providers.permissions.read().tools["notes/append"], "allow");
-  }
 });
 
 test("allow performs separate explicit calls without a confirmation channel", async t => {
@@ -238,7 +180,7 @@ for (const permission of ["ask", "review"]) {
     assert.equal(f.execution.get(value.intentId).state, "pending");
     assert.equal(f.execution.get(value.intentId).attempt, undefined);
     await assert.rejects(readFile(file));
-    dialog.handleInput("\t"); dialog.handleInput("\r");
+    dialog.handleInput("\r");
     const result = await pending;
     assert.equal(result.state, "observed"); assert.equal(result.outcome, "accepted");
     assert.ok(result.attempt); assert.ok(result.receiptId);
@@ -254,7 +196,7 @@ test("decline, cancellation and permission, credential or contract changes never
     const signal = new AbortController(), confirmation = localConfirmation(signal.signal);
     const pending = f.execution.call(scope, "notes", "append", { file, note: action }, confirmation.ask, signal.signal);
     const { dialog, value } = await confirmation.ready;
-    if (action === "decline") dialog.handleInput("\r");
+    if (action === "decline") { dialog.handleInput("\t"); dialog.handleInput("\r"); }
     else if (action === "abort") signal.abort();
     else {
       if (action === "contract") {
@@ -266,7 +208,7 @@ test("decline, cancellation and permission, credential or contract changes never
         const changed = providerData(f.providers.provider("notes")); changed.env = { LOCAL_TEST: "${FFA_TEST_VALUE}" };
         f.store.put("provider", "notes", changed);
       } else await f.setPermission(action);
-      dialog.handleInput("\t"); dialog.handleInput("\r");
+      dialog.handleInput("\r");
     }
     if (action === "decline") assert.equal((await pending).state, "declined");
     else await assert.rejects(pending);
@@ -307,7 +249,7 @@ test("default changes apply to unconfigured tools and formatting does not invali
   const pending = f.execution.call(scope, "notes", "append", args, confirmation.ask);
   const { dialog } = await confirmation.ready;
   await writeFile(f.config, JSON.stringify({ tools: {}, default: "ask" }, null, 2));
-  dialog.handleInput("\t"); dialog.handleInput("\r"); assert.equal((await pending).state, "observed");
+  dialog.handleInput("\r"); assert.equal((await pending).state, "observed");
   await writeFile(f.config, JSON.stringify({ default: "allow", tools: {} }));
   assert.equal((await f.execution.call(scope, "notes", "append", args)).outcome, "accepted");
   await writeFile(f.config, JSON.stringify({ default: "deny", tools: {} }));
@@ -350,10 +292,10 @@ test("known rejected business results keep failed receipts without an unknown ob
 
 test("real process failure returns an unknown record with the protocol output", async t => {
   const f = await fixture(t);
-  await f.providers.configure({ id: "failure", kind: "cli", command: "false",
+  await f.providers.manage({ action: "register", provider: "failure", config: { kind: "cli", command: "false" },
     coverage: { basis: "false(1)", limitations: [] },
-    operations: [{ name: "exit", description: "Exit nonzero", inputSchema: { type: "object", additionalProperties: false }, argv: [] }] },
-    approveLocally, undefined, { "failure/exit": "allow" });
+    operations: [{ name: "exit", description: "Exit nonzero", inputSchema: { type: "object", additionalProperties: false }, argv: [] }],
+    permissions: { exit: "allow" } }, approveLocally);
   const intent = await f.execution.call(scope, "failure", "exit", {});
   assert.equal(intent.state, "unknown"); assert.ok(intent.attempt); assert.ok(intent.receiptId);
   assert.equal(f.store.get("receipt", intent.receiptId).data.exitCode, 1);
@@ -363,10 +305,10 @@ test("real process failure returns an unknown record with the protocol output", 
 test("cancellation after a real file write retains an unknown attempt and never repeats it", { timeout: 15_000 }, async t => {
   const f = await fixture(t), file = join(f.root, "written"), controller = new AbortController();
   const code = "import json,sys,time\nfrom pathlib import Path\np=json.load(sys.stdin)\nPath(p['file']).write_text(json.dumps(p))\ntime.sleep(60)";
-  await f.providers.configure({ id: "process", kind: "cli", command: "python3",
+  await f.providers.manage({ action: "register", provider: "process", config: { kind: "cli", command: "python3" },
     coverage: { basis: "Local Python file calculation", limitations: [] },
-    operations: [{ name: "write", description: "Write local input and wait", inputSchema: { type: "object" }, argv: ["-c", code], stdin: true }] },
-    approveLocally, undefined, { "process/write": "allow" });
+    operations: [{ name: "write", description: "Write local input and wait", inputSchema: { type: "object" }, argv: ["-c", code], stdin: true }],
+    permissions: { write: "allow" } }, approveLocally);
   const watcher = watch(f.root, (_event, path) => { if (path === "written") controller.abort(); });
   t.after(() => watcher.close());
   const args = { file, note: "sent once" };

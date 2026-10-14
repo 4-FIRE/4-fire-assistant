@@ -11,6 +11,7 @@ import type { AgentExecution } from "../model/agent.js";
 import type { CallAccess } from "../tools/access.js";
 import { providersTool } from "../tools/providers.js";
 import { providerCallTool } from "../tools/provider-call.js";
+import { providerRecordTool } from "../tools/provider-record.js";
 import type { Confirmations } from "../ui/confirmation.js";
 import { pythonTool } from "../tools/python.js";
 import { PiAgents } from "./pi-agents.js";
@@ -72,7 +73,8 @@ export function bindAgentRun(pi: ExtensionAPI, host: PiAgents, providers: Provid
       providersTool(providers, childAccess),
       providerCallTool({ call: (_scope, provider, operation, parameters, _confirm, callSignal) =>
         task.call(provider, operation, parameters, (value, recheck) => confirm(value, childAccess.signal(callSignal), recheck), callSignal)
-      }, records, childAccess, confirmations),
+      }, childAccess, confirmations),
+      providerRecordTool(records, childAccess),
       pythonTool(research, childAccess),
       ...agentFileTools(ctx.cwd, childAccess, ctx, signal, confirmations),
     ];

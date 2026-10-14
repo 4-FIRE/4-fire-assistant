@@ -22,15 +22,40 @@ test("inspection is read-only; explicit initialization persists pending without 
   await prepareWorkspace(root);
   assert.deepEqual(await begin(root), await state(root));
   assert.equal(await readFile(join(root, "AGENTS.md"), "utf8"), "User-owned instructions");
-  await assert.rejects(documentsReady(root, ["market"]));
-  await mkdir(join(root, "providers/market"));
-  await writeFile(join(root, "providers/AGENTS.md"), "Provider index");
-  await writeFile(join(root, "providers/market/GUIDE.md"), "Native API guide");
-  await documentsReady(root, ["market"]);
+  await documentsReady(root);
+  await writeFile(join(root, "AGENTS.md"), "");
+  await assert.rejects(documentsReady(root));
+  await writeFile(join(root, "AGENTS.md"), "User-owned instructions");
+  await documentsReady(root);
   await finish(root, "market");
   assert.equal((await state(root)).status, "ready");
   await assert.rejects(finish(root, "other"));
 });
+test("market-free state persists without adding a market or overwriting documents", async t => {
+  const root = await directory(t);
+  await begin(root);
+  await prepareWorkspace(root);
+  await documentsReady(root);
+  for (const market of ["", "   ", "x".repeat(257), null, 1]) await assert.rejects(finish(root, market));
+  assert.equal((await state(root)).status, "pending");
+  await finish(root);
+  const ready = { format: "ffa-pi/1", status: "ready" };
+  assert.deepEqual({ ...await state(root) }, ready);
+  assert.deepEqual(JSON.parse(await readFile(join(root, ".ffa/workspace.json"), "utf8")), ready);
+  await assert.rejects(finish(root));
+});
+
+for (const market of ["", "   ", "x".repeat(257), null, 1]) {
+  test("state rejects invalid explicit market " + JSON.stringify(market), async t => {
+    const root = await directory(t);
+    await begin(root);
+    const path = join(root, ".ffa/workspace.json"), value = JSON.stringify({ format: "ffa-pi/1", status: "ready", market });
+    await writeFile(path, value);
+    await assert.rejects(state(root));
+    assert.equal(await readFile(path, "utf8"), value);
+  });
+}
+
 test("confirmed initialization prepares a root entry before returning and preserves edits on resume", async t => {
   const root = await directory(t);
   const initial = await startInitialization(root, approveLocally);
@@ -38,6 +63,9 @@ test("confirmed initialization prepares a root entry before returning and preser
   const entry = join(root, "AGENTS.md");
   assert.ok((await stat(entry)).isFile());
   assert.ok((await stat(entry)).size > 0);
+  for (const name of ["areas", "projects", "knowledge", "providers", "scratch", "agents"]) {
+    assert.deepEqual(await readdir(join(root, name)), []);
+  }
   await writeFile(entry, "User-owned instructions");
   await startInitialization(root, approveLocally);
   assert.equal(await readFile(entry, "utf8"), "User-owned instructions");

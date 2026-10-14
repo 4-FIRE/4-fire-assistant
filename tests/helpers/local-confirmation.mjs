@@ -8,9 +8,9 @@ const theme = loadThemeFromPath(new URL("../../node_modules/@earendil-works/pi-c
 export function localConfirmation(signal) {
   let opened;
   const ready = new Promise(resolve => { opened = resolve; });
-  return { ready, ask: value => new Promise(resolve => {
+  return { ready, ask: (value, _recheck, cancel = signal) => new Promise(resolve => {
     const dialog = new ConfirmationDialog("Local operation", JSON.stringify(value), theme, new KeybindingsManager(),
-      () => 24, () => {}, resolve, signal);
+      () => 24, () => {}, resolve, cancel);
     dialog.render(80);
     opened({ dialog, value });
   }) };
@@ -19,6 +19,6 @@ export async function approveLocally(value) {
   const confirmation = localConfirmation();
   const decision = confirmation.ask(value);
   const { dialog } = await confirmation.ready;
-  dialog.handleInput("\t"); dialog.handleInput("\r");
+  dialog.handleInput("\r");
   return decision;
 }
