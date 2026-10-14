@@ -55,7 +55,7 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   const names = session.getAllTools().map(tool => tool.name);
   assert.ok(names.includes("ffa_python")); assert.ok(names.includes("ffa_agent"));
   assert.ok(!names.includes("ffa_finish_initialization"));
-  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["provider-calls", "provider-connections", "trading"]);
+  assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["project-maintenance", "provider-calls", "provider-connections", "trading"]);
   const storeFiles = await readdir(join(root, ".ffa"));
   assert.ok(storeFiles.includes("business.sqlite"));
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_provider_manage");
