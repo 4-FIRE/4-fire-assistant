@@ -87,6 +87,12 @@ export class ExecutionService {
       throw error;
     }
   }
+  archiveHistory() {
+    requireThat(this.#closed && !this.#active.size, "活动调用结束后才能归档。");
+    if (!this.#healthy || !this.store.healthy) return;
+    this.ledger.recover();
+    this.store.calls.archive(this.ledger.list().filter(intent => intent.permission === "allow").map(intent => intent.id));
+  }
   async close() {
     this.#closed = true;
     await Promise.allSettled([...this.#active]);

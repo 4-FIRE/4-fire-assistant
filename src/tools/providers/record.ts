@@ -11,7 +11,7 @@ const valid = schema(input);
 export function providerRecordTool(records: Pick<RecordService, "read">, access: CallAccess) {
   return defineTool({
     name: "ffa_provider_record", label: "读取调用记录",
-    description: "读取调用或回执元数据，不连接、不批准、不发送。kind=intent/receipt，id 为 intentId/receiptId。回执的 dataPath 指向完整结果 JSON（data 和可选 raw 诊断），使用 read 或计算读取，不在此工具中分页搬运正文。未知结果先核对记录与原生事实，不自动重发。",
+    description: "读取调用或回执元数据，不连接、不批准、不发送。kind=intent/receipt，id 为 intentId/receiptId。归档回执按需恢复对应结果文件，dataPath 指向完整结果 JSON（data 和可选 raw 诊断）；旧路径不存在时先重新读取回执，再用 read 或计算读取，不重新执行原调用。未知结果先核对记录与原生事实，不自动重发。",
     parameters: input,
     outputSchema: Type.Object({ record: Type.Unknown() }),
     async execute(_id, args) {

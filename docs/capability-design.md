@@ -130,7 +130,7 @@ TUI 确认窗口默认选中“确认”，Enter 执行当前选项；须先核�
 
 ## 6. 结果与恢复
 
-调用返回 `intentId`、可选 `receiptId`、权限、状态、数据及已保存结果的 `dataPath`。大结果提供 16,000 字符预览和 `truncated=true`。`ffa_provider_record` 返回 `record` 元数据；回执包含 `dataPath`，不包含正文，也不提供字符串分页。完整结果文件含 `data` 和可选 `raw` 诊断，使用原生文件工具或计算按需读取。
+调用返回 `intentId`、可选 `receiptId`、权限、状态、数据及已保存结果的 `dataPath`。大结果提供 16,000 字符预览和 `truncated=true`。`ffa_provider_record` 返回 `record` 元数据；回执包含 `dataPath`，不包含正文，也不提供字符串分页。完整结果文件含 `data` 和可选 `raw` 诊断，使用原生文件工具或计算按需读取。正常退出按调用时权限保留 ask/review 散文件，归档 allow 记录。读取归档回执会按需恢复正文；旧路径缺失时重新读取回执，不重新执行原调用。归档不改变权限、结果分类或 unknownCalls。
 
 可选 `outcomes` schema 区分业务受理与拒绝。完整成功返回且恰好匹配一个条件时，结果才明确；传输失败、条件冲突或不匹配保持 `unknown`。
 

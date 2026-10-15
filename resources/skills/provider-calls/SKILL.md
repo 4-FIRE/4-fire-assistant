@@ -29,6 +29,8 @@ review 调用前，助手通过 ffa_agent 的 action=start、agent=reviewer 委�
 
 kind 为 receipt 或 intent，返回 record 元数据。回执的 dataPath 指向完整 JSON 文件，其中 data 是结果正文，raw 是可选诊断。用原生 read 查看需要的内容；大批量数据交给计算直接读取该文件，避免逐页搬入模型上下文。记录工具不接受 offset/limit，不连接、不发送；不要提交业务调用参数。
 
+退出后部分历史结果会被归档。旧 dataPath 不存在时，使用 receiptId 再次读取 ffa_provider_record；它会从归档恢复对应结果文件。不要为找回旧结果而重新执行业务调用。
+
 ## 未知结果与恢复
 
 程序在发送前可靠保存发送尝试。一个意图最多发送一次；新的 ffa_provider_call 是新的显式请求，不自动复用旧结果。脚本失败、取消或未知结果不得触发自动重发。

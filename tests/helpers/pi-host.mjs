@@ -35,7 +35,7 @@ export async function host(t, status, providers = [], permissions = { default: "
   const errors = [];
   await session.bindExtensions({ mode: "json", onError: error => errors.push(error) });
   t.after(async () => {
-    await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" }); session.dispose();
+    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose();
     await rm(temp, { recursive: true, force: true });
   });
   assert.deepEqual(errors, []);

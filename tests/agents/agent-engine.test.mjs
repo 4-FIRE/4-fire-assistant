@@ -177,7 +177,7 @@ test("public agent tools preserve structured failures, result ownership and usag
   const restored = await agentTool.execute("branch", { action: "read", runId: initial.data.runId });
   assert.equal(restored.structuredContent.state, "interrupted");
   assert.equal(restored.structuredContent.report, "");
-  await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" });
+  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
   await assert.rejects(agentTool.execute("stale", { action: "read", runId }));
 });
 

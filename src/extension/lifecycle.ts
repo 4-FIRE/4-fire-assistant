@@ -45,7 +45,7 @@ export class WorkspaceInstance implements CallAccess {
     this.#background = new AbortController();
     this.agents.cancelAll();
   }
-  close(): Promise<void> {
+  close(archive = false): Promise<void> {
     if (this.#closing) return this.#closing;
     this.#controller.abort();
     this.#work.abort();
@@ -56,6 +56,7 @@ export class WorkspaceInstance implements CallAccess {
         const results = await Promise.allSettled([this.execution.close(), this.providers.close()]);
         const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
         if (errors.length) throw new AggregateError(errors, "工作区关闭失败。");
+        if (archive) this.execution.archiveHistory();
       } finally { this.store.close(); }
     })();
     return this.#closing;
@@ -83,9 +84,9 @@ export class Lifecycle {
     const initial = await startInitialization(await realpath(root), confirm);
     await this.open(root, initial);
   }
-  async close() {
+  async close(archive = false) {
     const old = this.#active;
     this.#active = undefined;
-    try { await old?.close(); } finally { this.hide(); }
+    try { await old?.close(archive); } finally { this.hide(); }
   }
 }

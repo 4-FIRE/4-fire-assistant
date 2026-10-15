@@ -39,7 +39,7 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
   pi.on("session_before_switch", () => { lifecycle.active?.cancelWork(); });
   pi.on("session_before_fork", () => { lifecycle.active?.cancelWork(); });
   pi.on("session_before_tree", () => { lifecycle.active?.cancelWork(); });
-  pi.on("session_shutdown", () => lifecycle.close());
+  pi.on("session_shutdown", event => lifecycle.close(event.reason === "quit"));
   pi.on("tool_call", async (event, ctx) => {
     const instance = lifecycle.active;
     if (["write", "edit"].includes(event.toolName) && "path" in event.input && typeof event.input.path === "string") {

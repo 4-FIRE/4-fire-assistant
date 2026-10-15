@@ -98,6 +98,38 @@ test("E2E: RPC approval controls real CLI sends and receipts remain readable aft
   assert.deepEqual((await reopened.tool("ffa_status")).unknownCalls, []);
 });
 
+test("E2E: quit archives allow calls and restores their receipts without repeating local side effects", { timeout: 60_000 }, async t => {
+  const { workspace, pi, journal } = await registeredWorkspace(t);
+  const approved = await pi.confirm(() => pi.tool("ffa_provider_call", {
+    provider: "calculation", operation: "square", parameters: { value: 3 },
+  }));
+  const permissions = await pi.tool("ffa_provider_manage", { action: "read", provider: "calculation", target: "permissions" });
+  await pi.confirm(() => pi.tool("ffa_provider_manage", { action: "update", provider: "calculation", target: "permissions",
+    mode: "set", expectedRevision: permissions.revision, permissions: { square: "allow", write_then_fail: "allow" } }));
+  const sent = await pi.tool("ffa_provider_call", { provider: "calculation", operation: "square", parameters: { value: 6 } });
+  const { structuredContent: unknown } = await pi.execute("ffa_provider_call", {
+    provider: "calculation", operation: "write_then_fail", parameters: { value: 7 },
+  });
+  assert.equal(unknown.state, "unknown");
+  assert.equal(await readFile(journal, "utf8"), "9\n36\n49\n");
+  assert.deepEqual(await pi.stop(), { code: 0, signal: null });
+  assert.deepEqual(await readdir(join(workspace.root, ".ffa/calls")), [approved.intentId + ".json"]);
+  assert.deepEqual(await readdir(join(workspace.root, ".ffa/results")), [approved.intentId + ".json"]);
+  const batches = await readdir(join(workspace.root, ".ffa/archives")); assert.equal(batches.length, 1);
+  const reopened = await workspace.start();
+  assert.deepEqual((await reopened.tool("ffa_status")).unknownCalls.map(intent => intent.id), [unknown.intentId]);
+  assert.equal((await record(reopened, "intent", approved.intentId)).permission, "ask");
+  for (const call of [sent, unknown]) {
+    const receipt = await record(reopened, "receipt", call.receiptId);
+    const saved = JSON.parse(await readFile(receipt.dataPath, "utf8"));
+    assert.deepEqual(saved.data, call.data);
+  }
+  assert.equal(await readFile(journal, "utf8"), "9\n36\n49\n");
+  assert.deepEqual(await reopened.stop(), { code: 0, signal: null });
+  assert.deepEqual(await readdir(join(workspace.root, ".ffa/archives")), batches);
+  assert.deepEqual(await readdir(join(workspace.root, ".ffa/results")), [approved.intentId + ".json"]);
+});
+
 test("E2E: shutdown cancels a pending RPC approval and restart does not resume the call", { timeout: 60_000 }, async t => {
   const { workspace, pi, journal } = await registeredWorkspace(t);
   const confirmation = pi.waitFor(record => record.type === "extension_ui_request" && record.method === "confirm", pi.records.length);

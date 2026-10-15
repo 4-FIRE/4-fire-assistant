@@ -315,7 +315,7 @@ test("unknown call results retain their IDs and data through real codemode", asy
 test("codemode removes disabled workspace tools from discovery", async t => {
   const { session } = await host(t, "ready");
   const codemode = session.agent.state.tools.find(tool => tool.name === "codemode");
-  await session.extensionRunner.emit({ type: "session_shutdown", reason: "exit" });
+  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
   const result = await codemode.execute("disabled", { code: `return ALL_TOOLS.filter(tool => tool.name.startsWith("ffa_")).map(tool => tool.name);` }, undefined);
   assert.deepEqual(scriptValue(result), []);
 });
