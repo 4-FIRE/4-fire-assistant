@@ -43,7 +43,7 @@ pi
 - **能力接入**：通过助手接入 CLI/MCP、维护目录与权限。方法见[接入技能](resources/skills/provider-connections/SKILL.md)，调用与记录核对见[调用技能](resources/skills/provider-calls/SKILL.md)。
 - **专家协作**：内置通用专家、研究员和复核员；`agents/<name>.md` 可补充或定义职责。中断主会话不会停止后台专家；需要停止时明确提出，或使用 TUI 的 `/ffa agents`。重载会取消专家。详见[专家协作](docs/feat/agent-collaboration.md)。
 - **计算**：默认使用 `/usr/bin/python3`，依赖和共享环境由用户准备。每次运行保留源码、输入和产物，失败或取消也保留记录。详见[计算参考](resources/references/compute.md)。
-- **资料维护**：可要求“整理当前项目资料”或“检查交付并结项”，助手按[项目资料维护技能](resources/skills/project-maintenance/SKILL.md)处理。
+- **资料维护**：可要求“整理当前项目资料”或“检查交付并结项”，助手按[项目整理与维护技能](resources/skills/project-maintenance/SKILL.md)归集有用成果、保留必要证据并清理范围内不再需要的临时产物，不清理 `.ffa/` 内部记录。
 
 聊天恢复使用 Pi 原生 `pi --continue` 或 `pi --resume`；不会恢复旧批准或自动重发业务调用。
 
