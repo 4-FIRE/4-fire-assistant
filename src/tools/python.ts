@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { json } from "../common/json.js";
-import type { ResearchService } from "../services/research-service.js";
+import type { ResearchService } from "../services/research/research-service.js";
 import type { CallAccess } from "./access.js";
 import { result } from "./result.js";
 

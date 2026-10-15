@@ -1,15 +1,17 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceInstance } from "./lifecycle.js";
-import { agentContext } from "../tools/agent-context.js";
-import { agentHistory } from "../integrations/pi-agents.js";
+import { agentContext } from "../integrations/pi/agent-context.js";
+import { agentHistory } from "../integrations/pi/pi-agents.js";
 import { agentSummary } from "../ui/agent-display.js";
 import { AgentViewer } from "../ui/agent-viewer.js";
-import { agentDefinitions } from "../integrations/agent-resources.js";
+import { agentDefinitions } from "../integrations/pi/agent-resources.js";
 import type { Confirmations } from "../ui/confirmation.js";
 
 export async function showAgents(pi: ExtensionAPI, instance: WorkspaceInstance, ctx: ExtensionCommandContext, confirmations: Confirmations) {
   instance.check(true);
-  const { runIds } = agentContext(instance.agents, ctx), values = instance.agents.list(runIds);
+  const context = agentContext(ctx.sessionManager);
+  instance.agents.restore(context.values, context.reported);
+  const { runIds } = context, values = instance.agents.list(runIds);
   if (!ctx.hasUI || ctx.mode !== "tui") {
     ctx.ui.notify(JSON.stringify({ agents: await agentDefinitions(instance.root),
       runs: values.map(value => ({ ...value, report: value.report.slice(0, 16000) })) }, null, 2), "info");

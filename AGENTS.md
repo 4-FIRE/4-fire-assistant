@@ -9,7 +9,7 @@ ffa is a workspace-scoped Pi extension package, not a standalone CLI.
 - `src/services/`: business rules, state changes, and operation order.
 - `src/model/`: data-only business classes; no business behavior or Pi types.
 - `src/integrations/`: Pi sessions, MCP, CLI, and process execution.
-- `src/storage/`: SQLite reliability, ownership, and workspace state files.
+- `src/storage/`: atomic JSON, domain file storage, ownership, and workspace state files.
 - `src/extension/`: commands, events, activation, and resource lifetime.
 - `src/ui/`: confirmation queue, dialogs, and provider display.
 - `src/common/`: shared JSON, validation, file, and package-path helpers.
@@ -17,13 +17,18 @@ ffa is a workspace-scoped Pi extension package, not a standalone CLI.
 - `tests/`: necessary Node tests using real local logic and the Pi SDK.
 - `python/`: optional calculation library and its algorithm tests.
 - `docs/`: current architecture and validation limits.
+- `scripts/`: build helpers and standalone, manually run upgrade scripts.
 - `dist/`: generated test imports. Do not edit generated files.
 
-Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/technical-design.md` for module boundaries and validation limits. Read `docs/capability-design.md` before changing provider discovery or execution permissions. Do not support historical workspace formats or add migration, conversion, or default-field adapters. Delete unused repository code rather than adding adapters. Never delete user workspaces or historical trading records.
+Keep the top-level layers. Group related files by domain within a layer: services use `providers/`, `agents/`, `execution/`, and `workspace/`; integrations use `providers/` and `pi/`; tool contracts stay beside their domain tools. Tests use domain subdirectories under `tests/`.
+
+Read `docs/architecture-guidelines.md` for general design requirements. Read `docs/technical-design.md` for module boundaries and validation limits. Read `docs/capability-design.md` before changing provider discovery or execution permissions. 0.3.0 is the baseline. The extension supports only the current workspace format; it has no upgrade command, historical readers, or runtime compatibility layer. Future workspace upgrades belong in standalone scripts under `scripts/`, outside the extension lifecycle. Each actual upgrade must declare supported source and target formats, require a stopped workspace, back up before changes, validate results, and support explicit resumption after interruption. Do not migrate automatically at startup or silently fill missing fields during normal loading. Delete unused repository code. Never delete user workspaces or historical trading records.
+
+Release versions use `MAJOR.MINOR.PATCH` from `package.json`; bundled components share that release. Derive the workspace format from its compatibility line: `ffa/0.MINOR` before 1.0, then `ffa/MAJOR`. Keep the persisted contract unchanged within a line. Data changes requiring conversion must start a new line; do not add separate storage or upgrade version counters. Name standalone conversions `upgrade-<source-baseline>-to-<target-baseline>.mjs`.
 
 ## Commands
 
-Use Linux and Node.js 22.19 or later. Computation requires Python 3.11+.
+Use Linux with util-linux `flock` and Node.js 22.19 or later. Computation requires Python 3.11+.
 
 - `npm ci --ignore-scripts`: install locked dependencies.
 - `npm run check`: check TypeScript and dependency boundaries without emitting files.
@@ -51,7 +56,8 @@ Pi loads the source extension with jiti. The package does not require compiled J
 - Keep tool inputs, outputs, schemas, and execution adapters together. Commands and tools call the same services.
 - Keep state changes in their owning services. Bind tools to one workspace instance and reject stale calls after close.
 - Keep each module focused. Do not add unused interfaces or forwarding layers.
-- Do not create a plugin platform, fixed research workflow, compatibility layer, or second main agent.
+- Use narrow strategies for existing protocol differences. Keep approval, persistence, and state rules in their owning services. Register implementations explicitly; do not add dynamic plugin discovery.
+- Do not create a plugin platform, fixed research workflow, or second main agent. Keep workspace upgrades in independent scripts, not in the extension runtime.
 - Keep tools inactive until the workspace enables them.
 - Keep every discovered provider capability in the catalog, including unresolved, blocked, and unavailable operations.
 - Keep native capability facts separate from user tool permissions. Do not classify a provider by its name.
@@ -69,7 +75,7 @@ Use camelCase for variables and functions, PascalCase for types, and kebab-case 
 
 Use `node:test` and `node:assert/strict`. Import compiled modules from dist. Test concrete correctness risks, not coverage counts or implementation structure.
 
-Do not use mocks, stubs, fake models, simulated providers, real trades, or personal credentials. Use actual local files, SQLite, processes, calculations, and Pi SDK behavior.
+Do not use mocks, stubs, fake models, simulated providers, real trades, or personal credentials. Use actual local files, processes, calculations, and Pi SDK behavior.
 
 Do not test documentation, prompt text, labels, or message wording. Parsing and serialization may verify structured values when they form the logic contract.
 

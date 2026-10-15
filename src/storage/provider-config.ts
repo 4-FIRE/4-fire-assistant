@@ -1,0 +1,79 @@
+import { isAbsolute } from "node:path";
+import { Provider, type Operation } from "../model/provider.js";
+import { canonical, object, type Params } from "../common/json.js";
+import { isCommandName, requireThat, schema } from "../common/validation.js";
+
+const providerSchema = schema({ type: "object", additionalProperties: false,
+  required: ["id", "kind", "operations"], properties: {
+    id: { type: "string", pattern: "^[a-z][a-z0-9_]{0,47}$" }, kind: { enum: ["cli", "mcp"] },
+    command: { type: "string", minLength: 1 }, args: { type: "array", items: { type: "string" } }, url: { type: "string" },
+    env: { type: "object", additionalProperties: { type: "string", pattern: "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$" } },
+    headers: { type: "object", additionalProperties: { type: "string", pattern: "^(Bearer )?\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$" } },
+    coverage: { type: "object", additionalProperties: false, required: ["basis", "limitations"], properties: {
+      basis: { type: "string", minLength: 1 }, limitations: { type: "array", items: { type: "string" } } } },
+    discovery: { type: "object", additionalProperties: false, required: ["status", "at", "scope"], properties: {
+      status: { enum: ["complete", "stale", "failed"] }, at: { type: "string" }, scope: { type: "string" } } },
+    operations: { type: "array", items: { type: "object", additionalProperties: false,
+      required: ["name", "description", "inputSchema"], properties: {
+        name: { type: "string", minLength: 1 }, description: { type: "string" },
+        available: { type: "boolean" }, native: { type: "object" },
+        inputSchema: { type: "object" }, stdin: { type: "boolean" },
+        argv: { type: "array", items: { anyOf: [ { type: "string" },
+          { type: "object", required: ["parameter"], additionalProperties: false, properties: { parameter: { type: "string" } } },
+          { type: "object", required: ["json"], additionalProperties: false, properties: { json: { const: true } } } ] } },
+        outcomes: { type: "object", required: ["accepted", "rejected"], additionalProperties: false,
+          properties: { accepted: { type: "object" }, rejected: { type: "object" } } }
+      } } }
+  } });
+export function parseProvider(value: unknown): Provider {
+  requireThat(providerSchema(value), "配置字段无效；请按可编辑契约提交，凭据只能引用 ${ENV_NAME}。");
+  const provider = structuredClone(value) as Provider;
+  requireThat(Boolean(provider.command) !== Boolean(provider.url), "能力提供方必须指定 command 或 url，不能同时指定。");
+  if (provider.command) {
+    if (provider.kind === "cli") requireThat(isCommandName(provider.command), "CLI command 必须是 PATH 中可直接执行的命令名，不接受路径或 shell 字符串。");
+    else requireThat(isAbsolute(provider.command) && !provider.command.includes("\0"), "MCP command 必须是绝对路径。");
+  }
+  if (provider.url) {
+    const url = new URL(provider.url);
+    requireThat(["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash, "URL 不得含凭据、查询或片段。");
+  }
+  requireThat(!provider.url || !provider.env && !provider.args, "HTTP 能力提供方不接受 env 或 args。");
+  requireThat(!provider.command || !provider.headers, "本地能力提供方不接受 headers。");
+  if (provider.kind === "cli") {
+    requireThat(provider.command && !provider.args && !provider.url, "CLI 需要 command；不接受能力提供方级 args。");
+    requireThat(provider.coverage?.basis.trim(), "coverage.basis：CLI 目录需要资料依据和覆盖缺口。");
+    requireThat(provider.discovery === undefined, "discovery：CLI 不接受 MCP 发现状态。");
+  }
+  const names = new Set<string>();
+  for (const [index, op] of provider.operations.entries()) {
+    requireThat(!names.has(op.name), "操作名重复。"); names.add(op.name);
+    requireThat(op.inputSchema.type === "object", "输入 schema 必须约束对象。");
+    // MCP facts may use schema features unavailable to the local validator. Keep the native catalog;
+    // execution still validates parameters before creating or sending a call.
+    if (provider.kind === "cli") schema(op.inputSchema);
+    if (provider.kind === "mcp" && op.native) requireThat(op.native.name === op.name &&
+      canonical(op.native.inputSchema) === canonical(op.inputSchema), "MCP 目录与原生输入定义不一致。");
+    if (op.outcomes) { schema(op.outcomes.accepted); schema(op.outcomes.rejected); }
+    if (provider.kind === "cli") {
+      requireThat(op.native === undefined, `operations[${index}].native：CLI 不接受 MCP 原生定义。`);
+      requireThat(op.available === false || op.argv, `operations[${index}].argv：可调用 CLI 操作需要参数绑定。`);
+      if (!op.argv) continue;
+      const whole = op.stdin || op.argv.some(token => object(token) && "json" in token);
+      const properties = object(op.inputSchema.properties) ? op.inputSchema.properties : {};
+      const bound = new Set(op.argv.flatMap(token => object(token) && "parameter" in token ? [token.parameter] : []));
+      requireThat(whole || op.inputSchema.additionalProperties === false && Object.keys(properties).every(key => bound.has(key)), "CLI 参数必须全部绑定 argv 或 JSON 输入。");
+    } else requireThat(op.argv === undefined && op.stdin === undefined, "MCP 不使用 argv 或 stdin 绑定。");
+  }
+  return new Provider(provider);
+}
+
+/** Keep class prototypes out of persisted data and connection identity. */
+export function providerData(provider: Provider): Params {
+  return structuredClone({ ...provider, operations: provider.operations.map(operation => ({ ...operation })) }) as unknown as Params;
+}
+
+/** Persisted dependency of outcome rules; shared by edits, discovery and file validation. */
+export function operationContract(kind: Provider["kind"], op: Operation) {
+  return kind === "cli" ? { inputSchema: op.inputSchema, argv: op.argv ?? null, stdin: op.stdin ?? false }
+    : { inputSchema: op.inputSchema, native: op.native ?? null };
+}

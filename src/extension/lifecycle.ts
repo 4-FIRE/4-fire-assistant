@@ -1,17 +1,16 @@
 import { realpath } from "node:fs/promises";
 import { requireThat } from "../common/validation.js";
-import { authorizeMutation } from "../services/workspace-files.js";
+import { authorizeMutation } from "../services/workspace/workspace-files.js";
 import { Scope } from "../model/execution-intent.js";
 import type { WorkspaceState } from "../model/workspace.js";
-import type { ProviderRegistry } from "../services/provider-registry.js";
-import type { ExecutionService } from "../services/execution-service.js";
-import type { InitializationService } from "../services/initialization-service.js";
-import type { ResearchService } from "../services/research-service.js";
-import type { RecordService } from "../services/record-service.js";
-import type { AgentService } from "../services/agent-service.js";
-import { startInitialization } from "../services/initialization-service.js";
-import { state } from "../storage/workspace-state.js";
-import type { WorkspaceUpdateService } from "../services/workspace-update-service.js";
+import type { ProviderRegistry } from "../services/providers/provider-registry.js";
+import type { ExecutionService } from "../services/execution/execution-service.js";
+import type { InitializationService } from "../services/workspace/initialization-service.js";
+import type { ResearchService } from "../services/research/research-service.js";
+import type { RecordService } from "../services/execution/record-service.js";
+import type { AgentService } from "../services/agents/agent-service.js";
+import { startInitialization } from "../services/workspace/initialization-service.js";
+import { parseState, state } from "../storage/workspace-state.js";
 import type { Store } from "../storage/store.js";
 import type { CallAccess } from "../tools/access.js";
 
@@ -22,8 +21,7 @@ export class WorkspaceInstance implements CallAccess {
   #closing: Promise<void> | undefined;
   constructor(readonly root: string, private readonly store: Store, readonly providers: ProviderRegistry,
     readonly execution: ExecutionService, readonly initialization: InitializationService,
-    readonly research: ResearchService, readonly records: RecordService, readonly agents: AgentService,
-    readonly updates: WorkspaceUpdateService) {}
+    readonly research: ResearchService, readonly records: RecordService, readonly agents: AgentService) {}
   check(ready = false) {
     requireThat(!this.#controller.signal.aborted, "ffa 未启用；请执行 /ffa init。");
     requireThat(!ready || this.initialization.snapshot().status === "ready", "请先完成工作区初始化。");
@@ -38,15 +36,24 @@ export class WorkspaceInstance implements CallAccess {
     this.check();
   }
   scope(session: string) { this.check(); return new Scope(session); }
-  cancelWork() { this.#work.abort(); this.#work = new AbortController(); }
-  cancelAgents() { this.#background.abort(); this.#background = new AbortController(); this.agents.cancelAll(); }
+  cancelWork() {
+    this.#work.abort();
+    this.#work = new AbortController();
+  }
+  cancelAgents() {
+    this.#background.abort();
+    this.#background = new AbortController();
+    this.agents.cancelAll();
+  }
   close(): Promise<void> {
     if (this.#closing) return this.#closing;
-    this.#controller.abort(); this.#work.abort(); this.#background.abort();
+    this.#controller.abort();
+    this.#work.abort();
+    this.#background.abort();
     this.#closing = (async () => {
       try {
-        await this.agents.close();
-        const results = await Promise.allSettled([this.execution.close(), this.providers.close(), this.updates.close()]);
+        await Promise.all([this.agents.close(), this.research.close()]);
+        const results = await Promise.allSettled([this.execution.close(), this.providers.close()]);
         const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
         if (errors.length) throw new AggregateError(errors, "工作区关闭失败。");
       } finally { this.store.close(); }
@@ -66,6 +73,7 @@ export class Lifecycle {
   inspect(root: string) { return state(root); }
   async open(root: string, current: WorkspaceState) {
     await this.close();
+    parseState(current);
     const instance = this.create(await realpath(root), current);
     this.#active = instance;
     try { this.register(instance); }
@@ -76,7 +84,8 @@ export class Lifecycle {
     await this.open(root, initial);
   }
   async close() {
-    const old = this.#active; this.#active = undefined;
+    const old = this.#active;
+    this.#active = undefined;
     try { await old?.close(); } finally { this.hide(); }
   }
 }

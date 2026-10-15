@@ -12,11 +12,10 @@ export class Intent {
   declare createdAt: string;
   declare permission: Exclude<Permission, "deny">;
   declare receiptId?: string;
-  declare state: "pending" | "dispatched" | "observed" | "unknown" | "closed" | "declined";
+  declare state: "pending" | "dispatched" | "observed" | "unknown" | "declined";
   declare attempt?: { id: string; at: string };
-  declare observation?: Observation;
+  declare observation?: Pick<Observation, "success">;
   declare outcome?: "accepted" | "rejected" | "unknown";
-  declare resolution?: string;
   constructor(value: Intent) { Object.assign(this, value); }
 }
 export class Scope {

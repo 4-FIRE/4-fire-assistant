@@ -8,7 +8,7 @@ export class Receipt {
   declare binding: string;
   declare at: string;
   declare success: boolean;
-  declare data: Json;
+  declare dataPath: string;
   constructor(value: Receipt) { Object.assign(this, value); }
 }
 export class Observation {

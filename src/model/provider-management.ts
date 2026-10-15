@@ -47,6 +47,7 @@ export interface ManagementResult {
   provider: string;
   action: "register" | "update" | "discover";
   configSaved?: boolean | null;
+  configFiles?: string[];
   permissions?: PermissionResult;
   discovery?: { status: "not_started" | "complete" | "failed"; limitations: string[] };
   saved?: unknown;

@@ -1,9 +1,9 @@
 import type { ExtensionAPI, ExtensionContext, CustomMessageEntryDraft, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import type { Lifecycle, WorkspaceInstance } from "./lifecycle.js";
 import type { Confirmations } from "../ui/confirmation.js";
-import { agentContext } from "../tools/agent-context.js";
+import { agentContext } from "../integrations/pi/agent-context.js";
 import { agentBoard } from "../ui/agent-display.js";
-import { agentConcurrency } from "../services/agent-queue.js";
+import { agentConcurrency } from "../services/agents/agent-queue.js";
 
 /** Delivers only at public Pi boundaries; no queued notification crosses navigation. */
 export function registerAgentEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmations: Confirmations) {
@@ -19,7 +19,8 @@ export function registerAgentEvents(pi: ExtensionAPI, lifecycle: Lifecycle, conf
   const valid = () => owner && owner === lifecycle.active && current;
   const notification = (): CustomMessageEntryDraft | undefined => {
     if (!valid() || paused || current!.signal?.aborted) return;
-    const { runIds } = agentContext(owner!.agents, current!);
+    const { values, runIds, reported } = agentContext(current!.sessionManager);
+    owner!.agents.restore(values, reported);
     const pending = owner!.agents.pending(runIds).slice(0, 8);
     if (!pending.length) return;
     owner!.agents.claim(pending.map(value => value.runId));
@@ -31,7 +32,9 @@ export function registerAgentEvents(pi: ExtensionAPI, lifecycle: Lifecycle, conf
   };
   const refresh = () => {
     if (!valid()) return;
-    const { runIds } = agentContext(owner!.agents, current!);
+    const context = agentContext(current!.sessionManager);
+    owner!.agents.restore(context.values, context.reported);
+    const { runIds } = context;
     const values = owner!.agents.list(runIds);
     if (current!.mode === "tui") current!.ui.setWidget("ffa-agents",
       values.some(value => !value.finishedAt) ? (_tui, theme) => agentBoard(values, theme, agentConcurrency) : undefined);
@@ -73,7 +76,11 @@ export function registerAgentEvents(pi: ExtensionAPI, lifecycle: Lifecycle, conf
   });
   pi.on("agent_settled", (event, ctx) => {
     current = ctx;
-    if (valid()) owner!.agents.reconcileUsage(agentContext(owner!.agents, ctx).reported);
+    if (valid()) {
+      const { values, reported } = agentContext(ctx.sessionManager);
+      owner!.agents.restore(values, reported);
+      owner!.agents.reconcileUsage(reported);
+    }
     if (event.aborted) { paused = true; clearTimer(); confirmations.pause(); }
     else refresh();
   });

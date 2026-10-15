@@ -1,6 +1,6 @@
 {
   "name": "4-fire-assistant",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "description": "Workspace-scoped collaboration for learning, project work, research, and decision support in Pi, with investment analysis and controlled trading capabilities",
   "type": "module",
@@ -18,6 +18,8 @@
   "files": [
     "src",
     "resources",
+    "scripts/upgrade-0.3.0.mjs",
+    "scripts/README.md",
     "python/src/ffa_compute/*.py",
     "python/requirements.lock",
     "python/README.md",
@@ -32,7 +34,9 @@
     "check": "tsc --noEmit && npm run check:dependencies",
     "check:dependencies": "depcruise --config .dependency-cruiser.cjs src",
     "build": "node scripts/clean-dist.mjs && tsc",
-    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*/*.test.mjs",
+    "test:smoke": "npm run build && node --test --test-concurrency=1 tests/smoke/*.test.mjs",
+    "test:e2e": "npm run build && node --test --test-concurrency=1 tests/e2e/*.test.mjs",
     "prepack": "npm run check"
   },
   "peerDependencies": {

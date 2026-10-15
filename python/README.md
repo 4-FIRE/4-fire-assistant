@@ -4,6 +4,8 @@
 
 `ffa_python` 执行普通源码，保存输入、输出与产物；项目、长期事务和临时运行分别存放。参数与限制见[计算说明](../resources/references/compute.md)。它不是沙箱，也不提供交易权限。
 
+计算库随 ffa 插件同版本发布，当前为 `0.3.0`。发布时将 `src/ffa_compute/__init__.py` 的 `__version__` 与根 `package.json` 同步；`pyproject.toml` 从该属性读取打包版本，不另设版本号。插件打包冒烟测试核对实际导入的计算库版本。
+
 ## 算法范围
 
 ffa_compute.indicators 提供 SMA、EMA、MACD、RSI 与 BOLL。ffa_compute.engine 提供 A 股单标的、多头、日线回测。其他研究不受此模型限制。

@@ -1,25 +1,45 @@
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, open } from "node:fs/promises";
-import { join } from "node:path";
-import { atomicFile } from "../common/files.js";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { toolId } from "../common/tool-id.js";
+import { requireThat, schema } from "../common/validation.js";
+import type { Permissions } from "../model/permission.js";
+import { readJsonFile, syncDirectory, writeJsonFile } from "./atomic-json.js";
+
+const permission = { enum: ["allow", "ask", "review", "deny"] };
+const valid = schema({ type: "object", additionalProperties: false, required: ["default", "tools"], properties: {
+  default: permission, tools: { type: "object", additionalProperties: permission,
+    propertyNames: { pattern: "^[a-z][a-z0-9_]{0,47}/.+$" } },
+} });
+function parsePermissions(value: unknown): Permissions {
+  requireThat(valid(value), "权限配置无效。需要 default 和 tools，值为 allow、ask、review 或 deny。");
+  const config = value as Permissions;
+  for (const id of Object.keys(config.tools)) {
+    const [provider, operation] = id.split("/");
+    requireThat(operation && id === toolId(provider!, decodeURIComponent(operation)), "工具 ID 必须使用规范编码。");
+  }
+  return config;
+}
 
 export class PermissionFile {
-  readonly path: string;
-  constructor(private readonly root: string) { this.path = join(root, ".ffa", "permissions.json"); }
-  private check() {
-    const directory = join(this.root, ".ffa");
-    if (lstatSync(directory).isSymbolicLink() || realpathSync(directory) !== join(realpathSync(this.root), ".ffa")) {
-      throw new Error("权限目录不能是符号链接。");
-    }
-    if (existsSync(this.path) && lstatSync(this.path).isSymbolicLink()) throw new Error("权限文件不能是符号链接。");
+  readonly #directory: string;
+  #failed = false;
+  constructor(root: string) { this.#directory = join(root, ".ffa"); }
+  checkHealthy() { requireThat(!this.#failed, "权限保存未可靠完成；请重载并核对配置。"); }
+  read(): Permissions {
+    return readJsonFile(this.#directory, "permissions.json", parsePermissions);
   }
-  read() { this.check(); return readFileSync(this.path, "utf8"); }
-  async initialize(content: string) {
-    await mkdir(join(this.root, ".ffa"), { recursive: true }); this.check();
+  async initialize() {
+    this.checkHealthy();
     try {
-      const file = await open(this.path, "wx", 0o600);
-      try { await file.writeFile(content); await file.sync(); } finally { await file.close(); }
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+      await mkdir(this.#directory, { recursive: true, mode: 0o700 });
+      syncDirectory(dirname(this.#directory));
+      writeJsonFile(this.#directory, "permissions.json", { default: "ask", tools: {} }, parsePermissions, true);
+    } catch (error) { this.#failed = true; throw error; }
   }
-  async write(content: string) { this.check(); await atomicFile(this.path, content); }
+  async write(value: Permissions) {
+    this.checkHealthy();
+    parsePermissions(value);
+    try { writeJsonFile(this.#directory, "permissions.json", value, parsePermissions); }
+    catch (error) { this.#failed = true; throw error; }
+  }
 }

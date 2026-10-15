@@ -2,28 +2,26 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resourceRoot } from "../common/paths.js";
-import type { ProviderRegistry } from "../services/provider-registry.js";
-import type { ExecutionService } from "../services/execution-service.js";
-import type { InitializationService } from "../services/initialization-service.js";
-import type { ResearchService } from "../services/research-service.js";
-import type { RecordService } from "../services/record-service.js";
-import type { AgentService } from "../services/agent-service.js";
-import type { WorkspaceUpdateService } from "../services/workspace-update-service.js";
-import { workspaceUpdateTools } from "./workspace-update.js";
+import type { ProviderRegistry } from "../services/providers/provider-registry.js";
+import type { ExecutionService } from "../services/execution/execution-service.js";
+import type { InitializationService } from "../services/workspace/initialization-service.js";
+import type { ResearchService } from "../services/research/research-service.js";
+import type { RecordService } from "../services/execution/record-service.js";
+import type { AgentService } from "../services/agents/agent-service.js";
 import type { Confirmations } from "../ui/confirmation.js";
 import type { CallAccess } from "./access.js";
-import { providersTool } from "./providers.js";
-import { providerCallTool } from "./provider-call.js";
-import { providerManageTool } from "./provider-manage.js";
-import { providerRecordTool } from "./provider-record.js";
-import { finishInitializationTool } from "./finish-initialization.js";
+import { providersTool } from "./providers/catalog.js";
+import { providerCallTool } from "./providers/call.js";
+import { providerManageTool } from "./providers/manage.js";
+import { providerRecordTool } from "./providers/record.js";
+import { finishInitializationTool } from "./workspace/finish-initialization.js";
 import { pythonTool } from "./python.js";
-import { statusTool } from "./status.js";
-import { agentTool, type BindAgentRun } from "./agent.js";
+import { statusTool } from "./workspace/status.js";
+import { agentTool, type BindAgentRun } from "./agents/tool.js";
 
 export interface ToolServices {
   providers: ProviderRegistry; execution: ExecutionService; initialization: InitializationService;
-  research: ResearchService; records: RecordService; agents: AgentService; updates: WorkspaceUpdateService;
+  research: ResearchService; records: RecordService; agents: AgentService;
 }
 export function mainTools(services: ToolServices, access: CallAccess, confirmations: Confirmations, run: BindAgentRun): ToolDefinition[] {
   const { providers, execution, initialization, research, records, agents } = services;
@@ -33,7 +31,7 @@ export function mainTools(services: ToolServices, access: CallAccess, confirmati
     tools.push(finishInitializationTool(initialization, access, confirmations));
   } else {
     tools.push(pythonTool(research, access), statusTool(initialization, execution, providers, access),
-      agentTool(agents, access, run), ...workspaceUpdateTools(services.updates, access, confirmations));
+      agentTool(agents, access, run));
   }
   return tools;
 }

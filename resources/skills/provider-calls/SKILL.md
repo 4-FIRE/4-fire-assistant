@@ -1,6 +1,6 @@
 ---
 name: provider-calls
-description: 使用 ffa 调用已接入的 CLI/MCP 能力、分页读取回执和核对未知结果。适用于接入验证、日常查询及已获授权操作的发送与结果检查。
+description: 使用 ffa 调用已接入的 CLI/MCP 能力、读取结果文件和核对未知结果。适用于接入验证、日常查询及已获授权操作的发送与结果检查。
 ---
 
 # 能力调用与结果核对
@@ -21,18 +21,18 @@ review 调用前，助手通过 ffa_agent 的 action=start、agent=reviewer 委�
 
 ## 结果与记录读取
 
-调用返回 intentId、可选 receiptId、permission、state、outcome、success 和 data。检查 success、state 和 outcome，不把协议成功或 accepted 当作业务完成或成交。大结果提供预览及 truncated=true。读取已有记录使用 ffa_provider_record，例如：
+调用返回 intentId、可选 receiptId、permission、state、outcome、success 和 data。检查 success、state 和 outcome，不把协议成功或 accepted 当作业务完成或成交。已保存的结果提供 dataPath；大结果仅返回预览及 truncated=true。读取已有记录使用 ffa_provider_record，例如：
 
 ```json
-{"kind":"receipt","id":"回执ID","offset":0,"limit":16000}
+{"kind":"receipt","id":"回执ID"}
 ```
 
-kind 为 receipt 或 intent。结果包含 JSON 文本 text 和 nextOffset，非空 nextOffset 用于继续读取。offset/limit 按 JavaScript 字符串索引计数。读取不连接、不发送；不要提交业务调用参数。
+kind 为 receipt 或 intent，返回 record 元数据。回执的 dataPath 指向完整 JSON 文件，其中 data 是结果正文，raw 是可选诊断。用原生 read 查看需要的内容；大批量数据交给计算直接读取该文件，避免逐页搬入模型上下文。记录工具不接受 offset/limit，不连接、不发送；不要提交业务调用参数。
 
 ## 未知结果与恢复
 
 程序在发送前可靠保存发送尝试。一个意图最多发送一次；新的 ffa_provider_call 是新的显式请求，不自动复用旧结果。脚本失败、取消或未知结果不得触发自动重发。
 
-结果不明时返回 state=unknown、success=false 和 intentId；用 ffa_provider_record 查看发送记录及已有回执。先核对外部事实，由用户通过 /ffa resolve 结案。未知记录不自动阻塞其他调用，也不授权重发。回执保存失败会停止后续发送，错误提供 intent ID，重启后核对账本。受理不等于成交。
+结果不明时返回 state=unknown、success=false 和 intentId；用 ffa_provider_record 查看发送记录及已有回执。先核对外部事实，把结论和调用 ID 保存在所属项目或交易资料中。未知记录不自动阻塞其他调用，也不授权重发。回执保存失败会停止后续发送，错误提供 intent ID，重启后核对账本。受理不等于成交。
 
 同一能力提供方的配置、发现与调用按依赖顺序完成。脚本失败不撤销已发生的副作用。

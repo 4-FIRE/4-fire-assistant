@@ -9,7 +9,7 @@
 | `ffa_provider_manage` | 读取可编辑数据，注册、更新、发现与权限管理 |
 | `ffa_providers` | 全部能力摘要；指定 provider 和 operation 取得完整调用定义 |
 | `ffa_provider_call` | 发送一次显式业务调用 |
-| `ffa_provider_record` | 分页读取意图或回执，不发送 |
+| `ffa_provider_record` | 读取意图或回执元数据及结果文件路径，不发送 |
 
 provider 始终是提供方 ID：1–48 个字符，以小写字母开头，只含小写字母、数字或下划线。operation 和权限映射的 key 使用原生操作名，不使用工具 ID、编码名称或展示签名。类型变化使用新 ID，旧目录与历史记录保留。
 
@@ -116,9 +116,10 @@ update permissions 提交 expectedRevision、mode 与 permissions：
 读取返回对应数据和版本；更新返回 saved 中的当前可编辑对象。检查 error 以及各阶段状态，不能只看 Promise 是否拒绝：
 
 - configSaved=true：本次配置可靠保存；false：本次未保存；null：无法核实。
+- configFiles：本次已确认可靠保存的配置文件阶段。多文件保存不构成事务，未列出不证明某次失败写入未发生。
 - permissions.status：not_started、complete、failed 或 unknown。applied 是已确认应用的原生操作名到权限值映射，null 表示已恢复继承；preserved 是未被建议覆盖的已有实际规则。
 - discovery.status：not_started、complete 或 failed。存储故障单独报告为 error.category=storage，不当作普通远端发现失败。
 
 权限可能已经保存而配置保存失败；配置可能已保存而发现失败。取消不回滚已保存数据。错误指出适用的下一步，不能据此认定获得执行授权。
 
-写入结果未知时先读取并核对当前状态，不自动重试；当前状态不能证明某次历史写入是否完成。新注册未保存但权限已写入时，保留结果中的已完成事实，必要时请用户检查权限文件，不直接修改 `.ffa/`。连接受阻不妨碍继续整理资料、目录依据和手册。
+写入结果未知时先读取并核对当前状态，不自动重试；当前状态不能证明某次历史写入是否完成。当前实例停止后续发送，核对后执行 `/reload`。用户在外部编辑提供方配置后也须重载；失配的结果契约不会自动套用于新接口。新注册未保存但权限已写入时，保留结果中的已完成事实，必要时请用户检查权限文件，不直接修改 `.ffa/`。连接受阻不妨碍继续整理资料、目录依据和手册。

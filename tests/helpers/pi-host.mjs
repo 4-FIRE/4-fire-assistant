@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createAgentSession, createCodemodeExtension, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { begin } from "../../dist/storage/workspace-state.js";
-import { finish } from "../../dist/services/initialization-service.js";
+import { finish } from "../../dist/services/workspace/initialization-service.js";
 import { Store } from "../../dist/storage/store.js";
-import { parseProvider, providerData } from "../../dist/services/provider-config.js";
+import { parseProvider, providerData } from "../../dist/storage/provider-config.js";
 
 export async function host(t, status, providers = [], permissions = { default: "ask", tools: { "local/echo": "allow", "local/write": "review" } }) {
   const temp = await mkdtemp(join(tmpdir(), "ffa-pi-")), root = join(temp, "workspace"), agentDir = join(temp, "agent");
@@ -18,7 +18,7 @@ export async function host(t, status, providers = [], permissions = { default: "
       await writeFile(join(root, ".ffa/permissions.json"), JSON.stringify(permissions));
     }
     const store = new Store(join(root, ".ffa"));
-    for (const provider of providers) store.put("provider", provider.id, providerData(parseProvider(provider)));
+    for (const provider of providers) store.providers.save(provider.id, providerData(parseProvider(provider)));
     store.close();
     if (status === "ready") await finish(root, "test-market");
   }
