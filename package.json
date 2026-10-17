@@ -1,6 +1,6 @@
 {
   "name": "4-fire-assistant",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Workspace-scoped collaboration for learning, project work, research, and decision support in Pi, with investment analysis and controlled trading capabilities",
   "type": "module",
@@ -19,8 +19,8 @@
     "src",
     "resources",
     "scripts/upgrade-0.3.0.mjs",
+    "scripts/setup-python.py",
     "scripts/README.md",
-    "python/src/ffa_compute/*.py",
     "python/requirements.lock",
     "python/README.md",
     "README.md",

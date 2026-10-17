@@ -15,7 +15,15 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
     await lifecycle.close();
     try {
       const current = await lifecycle.inspect(ctx.cwd);
-      if (current?.status === "ready") await lifecycle.open(ctx.cwd, current);
+      if (current?.status === "ready") {
+        await lifecycle.open(ctx.cwd, current);
+        ctx.ui.notify("正在准备共享 Python 环境；首次安装可能需要数分钟。", "info");
+        try { await lifecycle.get().preparePython(); }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (ctx.hasUI) ctx.ui.notify(message, "warning"); else console.error(message);
+        }
+      }
       else if (ctx.hasUI) ctx.ui.notify(current ? "初始化未完成；执行 /ffa init 接续。" : "ffa 未启用；需要时执行 /ffa init。", "info");
     } catch (error) {
       if (ctx.hasUI) ctx.ui.notify(error instanceof Error ? error.message : "ffa 启动失败。", "error");
@@ -32,7 +40,8 @@ export function registerEvents(pi: ExtensionAPI, lifecycle: Lifecycle, confirmat
     const workspace = await readFile(join(resourceRoot, "prompts/workspace.md"), "utf8");
     instance.check();
     event.systemPromptOptions.sections.ffa_workspace = workspace;
-    event.systemPromptOptions.sections.ffa = "ffa 包内资料根目录：" + resourceRoot + "\n" + role;
+    event.systemPromptOptions.sections.ffa = "ffa 包内资料根目录：" + resourceRoot +
+      "\n共享 Python 环境状态：" + JSON.stringify(instance.pythonEnvironment.status) + "\n" + role;
   });
   pi.on("input", () => { lifecycle.active?.cancelWork(); });
   pi.on("agent_end", () => { lifecycle.active?.cancelWork(); });

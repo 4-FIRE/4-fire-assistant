@@ -7,7 +7,7 @@ import { bindAgentRun } from "./extension/agent-run.js";
 import { ProviderRegistry } from "./services/providers/provider-registry.js";
 import { ExecutionService } from "./services/execution/execution-service.js";
 import { InitializationService } from "./services/workspace/initialization-service.js";
-import { ResearchService } from "./services/research/research-service.js";
+import { PythonEnvironmentService } from "./services/workspace/python-environment-service.js";
 import { RecordService } from "./services/execution/record-service.js";
 import { AgentService } from "./services/agents/agent-service.js";
 import { Confirmations } from "./ui/confirmation.js";
@@ -28,11 +28,11 @@ export default function ffa(pi: ExtensionAPI) {
       const execution = new ExecutionService(providers, store);
       if (current.status === "ready") providers.permissions.read();
       return new WorkspaceInstance(root, store, providers, execution,
-        new InitializationService(root, current, providers), new ResearchService(root, store.settings),
+        new InitializationService(root, current, providers), new PythonEnvironmentService(root),
         new RecordService(store.calls), new AgentService(execution));
     } catch (error) { store.close(); throw error; }
   }, instance => registry.register(mainTools(instance, instance, confirmations,
-    ctx => bindAgentRun(pi, agentHost, instance.providers, instance.records, instance.research, instance, ctx, confirmations))),
+    ctx => bindAgentRun(pi, agentHost, instance.providers, instance.records, instance, ctx, confirmations))),
   () => registry.hide());
   registerCommand(pi, lifecycle, confirmations);
   registerEvents(pi, lifecycle, confirmations);

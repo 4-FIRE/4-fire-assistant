@@ -8,7 +8,7 @@ import { showAgents } from "./agents-command.js";
 
 export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirmations: Confirmations) {
   pi.registerCommand("ffa", {
-    description: "工作区：init、status、agents、python /绝对路径",
+    description: "工作区：init、status、agents、python setup",
     getArgumentCompletions: prefix => {
       if (/\s/.test(prefix)) return null;
       return ["init", "status", "agents", "python"]
@@ -16,7 +16,7 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
         .map(command => ({ value: command, label: command }));
     },
     handler: async (args, ctx) => {
-      const [command, ...rest] = args.trim().split(/\s+/);
+      const [, command, argument = ""] = args.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/) ?? [];
       confirmations.resume();
       if (command === "init") {
         await ctx.waitForIdle();
@@ -30,16 +30,18 @@ export function registerCommand(pi: ExtensionAPI, lifecycle: Lifecycle, confirma
       }
       if (command === "status") {
         const current = await lifecycle.inspect(ctx.cwd);
-        ctx.ui.notify(JSON.stringify({ state: current ?? "inactive", unknownCalls: lifecycle.active?.execution.unknownCalls() ?? [] }, null, 2), "info"); return;
+        ctx.ui.notify(JSON.stringify({ state: current ?? "inactive", python: lifecycle.active?.pythonEnvironment.status, unknownCalls: lifecycle.active?.execution.unknownCalls() ?? [] }, null, 2), "info"); return;
       }
       if (command === "agents") { await showAgents(pi, lifecycle.get(), ctx, confirmations); return; }
-      if (command === "python") {
+      if (command === "python" && argument === "setup") {
         const instance = lifecycle.get(), cancel = instance.signal(ctx.signal);
-        await instance.research.configure(rest.join(" "),
-          (value, signal) => confirmations.ask(ctx, "确认共享 Python 环境", value, signal), cancel);
+        await ctx.waitForIdle();
+        ctx.ui.notify("正在准备共享 Python 环境；安装可能需要数分钟。", "info");
+        const result = await instance.preparePython(cancel);
+        ctx.ui.notify(JSON.stringify(result, null, 2), "info");
         return;
       }
-      ctx.ui.notify("用法：/ffa init | status | agents | python /绝对路径", "info");
+      ctx.ui.notify("用法：/ffa init | status | agents | python setup", "info");
     },
   });
 }

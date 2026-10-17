@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { after } from "node:test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +8,16 @@ import { begin } from "../../dist/storage/workspace-state.js";
 import { finish } from "../../dist/services/workspace/initialization-service.js";
 import { Store } from "../../dist/storage/store.js";
 import { parseProvider, providerData } from "../../dist/storage/provider-config.js";
+
+// Exercise a real damaged shared environment: no network or user-environment writes in Node tests.
+const previousDataHome = process.env.XDG_DATA_HOME;
+const pythonDataHome = await mkdtemp(join(tmpdir(), "ffa-python-host-"));
+await mkdir(join(pythonDataHome, "ffa/python/.venv"), { recursive: true });
+process.env.XDG_DATA_HOME = pythonDataHome;
+after(async () => {
+  if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previousDataHome;
+  await rm(pythonDataHome, { recursive: true, force: true });
+});
 
 export async function host(t, status, providers = [], permissions = { default: "ask", tools: { "local/echo": "allow", "local/write": "review" } }) {
   const temp = await mkdtemp(join(tmpdir(), "ffa-pi-")), root = join(temp, "workspace"), agentDir = join(temp, "agent");

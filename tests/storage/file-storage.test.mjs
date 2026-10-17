@@ -8,7 +8,6 @@ import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import { readJsonFile, writeJsonFile } from "../../dist/storage/atomic-json.js";
-import { WorkspaceOwner } from "../../dist/storage/workspace-owner.js";
 import { PermissionFile } from "../../dist/storage/permission-file.js";
 import { Store } from "../../dist/storage/store.js";
 import { Ledger } from "../../dist/services/execution/execution-ledger.js";
@@ -94,59 +93,22 @@ test("concurrent readers see a complete old or new JSON document", { timeout: 20
   assert.deepEqual(await readdir(root), ["record.json"]);
 });
 
-test("ownership is independent of business storage and is released after process death", { timeout: 20_000 }, async t => {
-  const root = await directory(t);
-  const module = new URL("../../dist/storage/workspace-owner.js", import.meta.url).href;
-  const child = spawn(process.execPath, ["--input-type=module", "-e", `
-    import { WorkspaceOwner } from ${JSON.stringify(module)};
-    const owner = new WorkspaceOwner(${JSON.stringify(root)});
-    process.stdout.write("ready");
-    process.stdin.resume();
-  `], { stdio: ["pipe", "pipe", "pipe"] });
-  t.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
-  await once(child.stdout, "data");
-  assert.throws(() => new WorkspaceOwner(root));
-  assert.throws(() => new Store(root));
-  assert.deepEqual(await readdir(root), ["owner.lock"]);
-  const exited = once(child, "exit");
-  child.kill("SIGKILL"); await exited;
-  const next = new WorkspaceOwner(root);
-  next.close(); next.close();
-  const store = new Store(root);
-  assert.throws(() => new WorkspaceOwner(root));
-  store.close();
-  const reopened = new WorkspaceOwner(root); reopened.close();
-});
-
-test("missing flock fails closed and releases the descriptor for a later owner", async t => {
-  const root = await directory(t);
-  const module = new URL("../../dist/storage/workspace-owner.js", import.meta.url).href;
+test("separate processes can open the same storage without flock", async t => {
+  const root = await directory(t), store = new Store(root);
+  t.after(() => store.close());
+  const module = new URL("../../dist/storage/store.js", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
-    import { WorkspaceOwner } from ${JSON.stringify(module)};
-    new WorkspaceOwner(${JSON.stringify(root)});
+    import { Store } from ${JSON.stringify(module)};
+    const store = new Store(${JSON.stringify(root)}, false);
+    if (!store.healthy) process.exit(1);
+    store.close();
   `], { env: { PATH: "" }, encoding: "utf8", timeout: 5_000 });
-  assert.equal(result.status, 1);
-  assert.deepEqual(await readdir(root), ["owner.lock"]);
-  const owner = new WorkspaceOwner(root);
-  t.after(() => owner.close());
-  // A separate process sees the held OS lock; releasing it does not remove the file.
-  assert.equal(spawnSync("flock", ["--nonblock", join(root, "owner.lock"), "true"]).status, 1);
-  const inode = (await stat(join(root, "owner.lock"))).ino;
-  owner.close(); owner.close();
-  assert.equal((await stat(join(root, "owner.lock"))).ino, inode);
-  assert.equal(spawnSync("flock", ["--nonblock", join(root, "owner.lock"), "true"]).status, 0);
-});
-
-test("owner rejects symbolic links and directories without altering their targets", async t => {
-  const root = await directory(t), outside = await directory(t);
-  const file = join(outside, "data");
-  await writeFile(file, "user data");
-  await symlink(file, join(root, "owner.lock"));
-  assert.throws(() => new WorkspaceOwner(root));
-  assert.equal(await readFile(file, "utf8"), "user data");
-  await rm(join(root, "owner.lock"));
-  await mkdir(join(root, "owner.lock"));
-  assert.throws(() => new WorkspaceOwner(root));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(store.healthy, true);
+  const other = new Store(root, false);
+  store.close(); store.close();
+  assert.equal(other.healthy, true);
+  other.close();
 });
 
 for (const duplicate of ["receipt", "event"]) {
@@ -170,7 +132,6 @@ for (const duplicate of ["receipt", "event"]) {
     }
     await writeFile(join(root, "calls", second.intent.id + ".json"), JSON.stringify(second));
     assert.throws(() => new Store(root, false));
-    const owner = new WorkspaceOwner(root); owner.close();
   });
 }
 

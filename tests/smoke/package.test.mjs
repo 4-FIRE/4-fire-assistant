@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 import { packageRoot, rpcWorkspace } from "../helpers/pi-rpc.mjs";
 import { begin } from "../../dist/storage/workspace-state.js";
 import { finish } from "../../dist/services/workspace/initialization-service.js";
-import { packageVersion } from "../../dist/common/version.js";
 
 const exec = promisify(execFile);
 
@@ -59,7 +58,7 @@ test("smoke: unsupported workspaces stay inactive and commands cannot convert or
   assert.deepEqual(await pi.stop(), { code: 0, signal: null });
 });
 
-test("smoke: packed sources load ready tools and run bundled Python without a dist directory", { timeout: 60_000 }, async t => {
+test("smoke: packed sources load ready tools and the standalone setup script without a dist directory", { timeout: 60_000 }, async t => {
   const workspace = await rpcWorkspace(t);
   const { temp } = workspace;
   const { stdout } = await exec("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", temp], {
@@ -70,6 +69,10 @@ test("smoke: packed sources load ready tools and run bundled Python without a di
   await exec("tar", ["-xzf", join(temp, filename), "-C", temp], { timeout: 10_000 });
   const packed = join(temp, "package");
   await exec(process.execPath, [join(packed, "scripts/upgrade-0.3.0.mjs")], { cwd: workspace.root });
+  const plan = await exec("/usr/bin/python3", ["-I", "-B", join(packed, "scripts/setup-python.py"), "--check"],
+    { env: { HOME: temp, XDG_DATA_HOME: join(temp, "empty-data") } });
+  assert.equal(JSON.parse(plan.stdout).python, join(temp, "empty-data/ffa/python/.venv/bin/python"));
+  await assert.rejects(readdir(join(temp, "empty-data")), { code: "ENOENT" });
   assert.deepEqual(await readdir(workspace.root), []);
   // Supply the already installed locked dependencies; do not download or install packages.
   await symlink(join(packageRoot, "node_modules"), join(packed, "node_modules"), "dir");
@@ -79,16 +82,12 @@ test("smoke: packed sources load ready tools and run bundled Python without a di
   await finish(workspace.root);
   const pi = await workspace.start(packed);
   const resources = await pi.inspect();
-  for (const name of ["ffa_status", "ffa_providers", "ffa_python", "ffa_agent"]) assert.ok(resources.tools.includes(name));
+  for (const name of ["ffa_status", "ffa_providers", "ffa_agent"]) assert.ok(resources.tools.includes(name));
   assert.ok(resources.skills.length > 0);
   assert.equal((await pi.tool("ffa_status")).workspace.status, "ready");
   assert.deepEqual((await pi.tool("ffa_providers")).providers, []);
   assert.ok((await pi.tool("ffa_agent", { action: "list" })).agents.length > 0);
-  const run = await pi.tool("ffa_python", { code: "import json, ffa_compute\nprint(json.dumps({'answer': 6 * 7, 'version': ffa_compute.__version__}))" });
-  assert.equal(run.state, "completed");
-  assert.deepEqual(run.output, { answer: 42, version: packageVersion });
-  const manifest = JSON.parse(await readFile(join(workspace.root, run.path, "manifest.json"), "utf8"));
-  assert.equal(manifest.state, "completed");
+  assert.ok(!resources.tools.includes("ffa_python"));
   assert.ok(!pi.records.some(record => record.type === "extension_error"));
   assert.deepEqual(await pi.stop(), { code: 0, signal: null });
 });

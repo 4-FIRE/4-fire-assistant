@@ -9,15 +9,15 @@ ffa is a workspace-scoped Pi extension package, not a standalone CLI.
 - `src/services/`: business rules, state changes, and operation order.
 - `src/model/`: data-only business classes; no business behavior or Pi types.
 - `src/integrations/`: Pi sessions, MCP, CLI, and process execution.
-- `src/storage/`: atomic JSON, domain file storage, ownership, and workspace state files.
+- `src/storage/`: atomic JSON, domain file storage, and workspace state files.
 - `src/extension/`: commands, events, activation, and resource lifetime.
 - `src/ui/`: confirmation queue, dialogs, and provider display.
 - `src/common/`: shared JSON, validation, file, and package-path helpers.
 - `resources/`: roles, skills, and references.
 - `tests/`: necessary Node tests using real local logic and the Pi SDK.
-- `python/`: optional calculation library and its algorithm tests.
+- `python/`: locked calculation dependencies, usage guidance, and native-library integration tests.
 - `docs/`: current architecture and validation limits.
-- `scripts/`: build helpers and standalone, manually run upgrade scripts.
+- `scripts/`: build helpers, shared Python venv preparation, and standalone workspace upgrades.
 - `dist/`: generated test imports. Do not edit generated files.
 
 Keep the top-level layers. Group related files by domain within a layer: services use `providers/`, `agents/`, `execution/`, and `workspace/`; integrations use `providers/` and `pi/`; tool contracts stay beside their domain tools. Tests use domain subdirectories under `tests/`.
@@ -28,7 +28,7 @@ Release versions use `MAJOR.MINOR.PATCH` from `package.json`; bundled components
 
 ## Commands
 
-Use Linux with util-linux `flock` and Node.js 22.19 or later. Computation requires Python 3.11+.
+Use Linux with Node.js 22.19 or later. Computation requires Python 3.11+.
 
 - `npm ci --ignore-scripts`: install locked dependencies.
 - `npm run check`: check TypeScript and dependency boundaries without emitting files.
@@ -62,6 +62,7 @@ Pi loads the source extension with jiti. The package does not require compiled J
 - Keep every discovered provider capability in the catalog, including unresolved, blocked, and unavailable operations.
 - Keep native capability facts separate from user tool permissions. Do not classify a provider by its name.
 - Check tool permissions at the actual send boundary, not only in prompts or tool hooks. Initialize known trading tools with review permissions. Models submit permission suggestions through tools; code owns persistence.
+- All ffa workspaces share one user-scoped Python venv. Ready workspace startup automatically prepares locked dependencies and activates the venv for this Pi process; errors are reported without changing system Python. Python uses native Bash and the project working directory. Setup does not execute research or create run records. Do not add a calculation tool, unified library wrapper, or implicit market rules. Project builds and tests use their declared environment.
 - Do not claim host isolation for Bash, Python, or extensions.
 - Do not add file hash verification in code, tests, builds, or checks.
 

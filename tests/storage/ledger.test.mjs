@@ -46,20 +46,25 @@ test("reopen changes incomplete attempts to unknown, independent of chat branche
     assert.throws(() => other.start(intent.id));
   } finally { reopened.close(); }
 });
-test("invalid file data is rejected and a second owner cannot access the ledger", async t => {
+test("invalid file data is rejected without rewriting settings", async t => {
   const { path, store } = await fixture(t);
-  assert.throws(() => new Store(path));
-  assert.throws(() => store.settings.save({ unknown: true }));
-  assert.deepEqual(store.settings.read(), {});
-  store.settings.save({ python: "/usr/bin/python3" });
-  assert.deepEqual(store.settings.read(), { python: "/usr/bin/python3" });
+  store.close();
+  const settings = join(path, "settings.json");
+  assert.deepEqual(JSON.parse(await readFile(settings, "utf8")), {});
+  await writeFile(settings, JSON.stringify({ unknown: true }));
+  assert.throws(() => new Store(path, false));
+  const saved = JSON.stringify({ python: "/previous/environment/bin/python" });
+  await writeFile(settings, saved);
+  const reopened = new Store(path, false);
+  reopened.close();
+  assert.equal(await readFile(settings, "utf8"), saved);
 });
 test("ready workspaces must not silently replace a missing ledger", async t => {
   const path = await mkdtemp(join(tmpdir(), "ffa-missing-"));
   t.after(() => rm(path, { recursive: true, force: true }));
   assert.throws(() => new Store(path, false));
   const store = new Store(path); store.close();
-  assert.deepEqual((await readdir(path)).sort(), ["calls", "owner.lock", "providers", "results", "settings.json"]);
+  assert.deepEqual((await readdir(path)).sort(), ["calls", "providers", "results", "settings.json"]);
   assert.deepEqual(JSON.parse(await readFile(join(path, "settings.json"), "utf8")), {});
   await rm(join(path, "settings.json"));
   assert.throws(() => new Store(path, false));
@@ -73,7 +78,7 @@ test("unrecognized storage is never adopted or overwritten by initialization", a
   assert.throws(() => new Store(path, false));
   assert.throws(() => new Store(path));
   assert.deepEqual(await readFile(file), value);
-  assert.deepEqual((await readdir(path)).sort(), ["owner.lock", "records.bin"]);
+  assert.deepEqual((await readdir(path)).sort(), ["records.bin"]);
 });
 
 test("only one complete non-conflicting receipt classification is known", () => {

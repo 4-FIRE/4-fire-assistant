@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { activatePython } from "../integrations/python-activation.js";
 import { requireThat } from "../common/validation.js";
 import { authorizeMutation } from "../services/workspace/workspace-files.js";
 import { Scope } from "../model/execution-intent.js";
@@ -6,7 +7,7 @@ import type { WorkspaceState } from "../model/workspace.js";
 import type { ProviderRegistry } from "../services/providers/provider-registry.js";
 import type { ExecutionService } from "../services/execution/execution-service.js";
 import type { InitializationService } from "../services/workspace/initialization-service.js";
-import type { ResearchService } from "../services/research/research-service.js";
+import type { PythonEnvironmentService } from "../services/workspace/python-environment-service.js";
 import type { RecordService } from "../services/execution/record-service.js";
 import type { AgentService } from "../services/agents/agent-service.js";
 import { startInitialization } from "../services/workspace/initialization-service.js";
@@ -19,9 +20,19 @@ export class WorkspaceInstance implements CallAccess {
   #work = new AbortController();
   #background = new AbortController();
   #closing: Promise<void> | undefined;
+  #restorePython: (() => void) | undefined;
   constructor(readonly root: string, private readonly store: Store, readonly providers: ProviderRegistry,
     readonly execution: ExecutionService, readonly initialization: InitializationService,
-    readonly research: ResearchService, readonly records: RecordService, readonly agents: AgentService) {}
+    readonly pythonEnvironment: PythonEnvironmentService, readonly records: RecordService, readonly agents: AgentService) {}
+  async preparePython(signal?: AbortSignal) {
+    this.check();
+    this.#restorePython?.();
+    this.#restorePython = undefined;
+    const result = await this.pythonEnvironment.setup(signal);
+    this.check();
+    this.#restorePython ??= activatePython(result.directory);
+    return result;
+  }
   check(ready = false) {
     requireThat(!this.#controller.signal.aborted, "ffa 未启用；请执行 /ffa init。");
     requireThat(!ready || this.initialization.snapshot().status === "ready", "请先完成工作区初始化。");
@@ -52,12 +63,12 @@ export class WorkspaceInstance implements CallAccess {
     this.#background.abort();
     this.#closing = (async () => {
       try {
-        await Promise.all([this.agents.close(), this.research.close()]);
+        await Promise.all([this.agents.close(), this.pythonEnvironment.close()]);
         const results = await Promise.allSettled([this.execution.close(), this.providers.close()]);
         const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
         if (errors.length) throw new AggregateError(errors, "工作区关闭失败。");
         if (archive) this.execution.archiveHistory();
-      } finally { this.store.close(); }
+      } finally { this.#restorePython?.(); this.#restorePython = undefined; this.store.close(); }
     })();
     return this.#closing;
   }

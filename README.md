@@ -2,11 +2,11 @@
 
 按工作区启用的 Pi 协作扩展，用于学习、项目推进、研究与决策支持，也提供投资分析和受控交易能力。
 
-模型负责分析与协调；ffa 提供资料入口、专家协作、可追溯计算和受控调用。不另建主 Agent，不自动开展任务或交易。
+模型负责分析与协调；ffa 提供资料入口、专家协作、Python 依赖安装和受控调用。不另建主 Agent，不自动开展任务或交易。
 
 ## 安装
 
-需要 Linux、util-linux `flock`、Node.js 22.19+，以及已配置模型和认证的 Pi。Python 计算需要 Python 3.11+。当前开发与测试使用 Pi 1.1.0，其他宿主版本需另行验证。
+需要 Linux、Node.js 22.19+，以及已配置模型和认证的 Pi。Python 计算需要 Python 3.11+。当前开发与测试使用 Pi 1.1.0，其他宿主版本需另行验证。
 
 从目标工作区根目录安装并启动：
 
@@ -37,12 +37,12 @@ pi
 | `/ffa init` | 开始或接续初始化；已完成时重载资源 |
 | `/ffa status` | 查看启用状态和调用时结果不明的记录 |
 | `/ffa agents` | 查看专家执行；TUI 中可阅读报告、会话及停止任务 |
-| `/ffa python /绝对路径/bin/python` | 确认共享 Python 解释器 |
+| `/ffa python setup` | 手工重试共享 venv 的准备并激活，无需指定路径 |
 | `/reload` | Pi 原生命令，重载插件与资源 |
 
 - **能力接入**：通过助手接入 CLI/MCP、维护目录与权限。方法见[接入技能](resources/skills/provider-connections/SKILL.md)，调用与记录核对见[调用技能](resources/skills/provider-calls/SKILL.md)。
 - **专家协作**：内置通用专家、研究员和复核员；`agents/<name>.md` 可补充或定义职责。中断主会话不会停止后台专家；需要停止时明确提出，或使用 TUI 的 `/ffa agents`。重载会取消专家。详见[专家协作](docs/feat/agent-collaboration.md)。
-- **计算**：默认使用 `/usr/bin/python3`，依赖和共享环境由用户准备。每次运行保留源码、输入和产物，失败或取消也保留记录。详见[计算参考](resources/references/compute.md)。
+- **Python 环境**：所有工作区共用当前用户的独立 venv。就绪工作区启动时自动创建或安装锁定依赖，成功后在当前 Pi 进程激活；主会话与专家通过 Bash 使用 `python` 或 `python3`。环境异常时提醒，修复后用 `/ffa python setup` 重试。系统 Python、外部终端、已有脚本和历史结果不变。共享依赖更新会影响其他工作区；更换插件版本或手工重试前应停止相关脚本。详见 [Python 说明](python/README.md)与[计算参考](resources/references/compute.md)。
 - **资料维护**：可要求“整理当前项目资料”或“检查交付并结项”，助手按[项目整理与维护技能](resources/skills/project-maintenance/SKILL.md)归集有用成果、保留必要证据并清理范围内不再需要的临时产物，不清理 `.ffa/` 内部记录。
 
 聊天恢复使用 Pi 原生 `pi --continue` 或 `pi --resume`；不会恢复旧批准或自动重发业务调用。
@@ -65,7 +65,7 @@ pi
 
 ## 更新与兼容性
 
-当前发布版本为 **0.3.1**，继续使用 `ffa/0.3` 工作区格式。现有 0.3.0 工作区可直接使用，不需要升级脚本，也不改写格式标识。归档目录在首次实际归档时创建；历史散文件按同一规则归档。归档产生后，不支持退回不识别归档的旧版插件读取记录。
+当前发布版本为 **0.3.2**，继续使用 `ffa/0.3` 工作区格式。现有 0.3.0 工作区可直接使用，不需要升级脚本，也不改写格式标识。归档目录在首次实际归档时创建；历史散文件按同一规则归档。归档产生后，不支持退回不识别归档的旧版插件读取记录。
 
 插件更新使用所用 Pi 版本的原生包管理命令；本地安装则更新来源源码，依赖变化后执行 `npm ci --ignore-scripts`，再重载或重启 Pi。
 
@@ -93,4 +93,4 @@ git diff --check
 - [架构原则](docs/architecture-guidelines.md)：职责、依赖和开发约束。
 - [技术设计](docs/technical-design.md)：模块、生命周期、版本与资源加载。
 - [能力与权限](docs/capability-design.md) · [专家协作](docs/feat/agent-collaboration.md) · [文件存储](docs/feat/file-storage.md)：当前专题设计。
-- [领域术语](CONTEXT.md) · [Python 计算库与许可](python/README.md)。
+- [领域术语](CONTEXT.md) · [Python 环境、原生库与许可](python/README.md)。

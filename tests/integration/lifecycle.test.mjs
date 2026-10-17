@@ -93,48 +93,6 @@ test("quit reports archive failures, leaves originals intact and releases owners
   finally { reopened.close(); }
 });
 
-test("source-loaded Python tools retain package library access after module moves", async t => {
-  const { root, session } = await host(t, "ready");
-  const tool = session.agent.state.tools.find(tool => tool.name === "ffa_python");
-  const answer = await tool.execute("library", { code: "import ffa_compute\nprint(42)" });
-  assert.equal(answer.structuredContent.state, "completed");
-  assert.equal(answer.structuredContent.output, 42);
-  const directory = join(root, answer.structuredContent.path);
-  assert.ok((await readdir(directory)).includes("main.py"));
-  assert.equal(JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")).state, "completed");
-});
-
-test("workspace shutdown waits for Python exit and preserves its final artifacts", { timeout: 15_000 }, async t => {
-  const { root, session } = await host(t, "ready");
-  const tool = session.agent.state.tools.find(tool => tool.name === "ffa_python");
-  const marker = join(root, "python-started");
-  let watcher;
-  const started = new Promise(resolve => {
-    watcher = watch(root, (_event, path) => { if (path === "python-started") resolve(); });
-  });
-  const pending = tool.execute("python-shutdown", {
-    code: `import time\nfrom pathlib import Path\nPath(${JSON.stringify(marker)}).write_text('started')\ntime.sleep(60)`,
-  });
-  try {
-    await started;
-    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-    const [id] = await readdir(join(root, "scratch/runs"));
-    const directory = join(root, "scratch/runs", id);
-    const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
-    assert.equal(manifest.state, "cancelled");
-    assert.ok(manifest.finishedAt);
-    assert.equal(JSON.parse(await readFile(join(directory, "process.json"), "utf8")).incomplete, true);
-    assert.ok((await readdir(directory)).includes("output.json"));
-    assert.equal((await pending).structuredContent.state, "cancelled");
-    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-    await assert.rejects(tool.execute("closed", { code: "print(42)" }));
-  } finally {
-    watcher.close();
-    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-    await pending;
-  }
-});
-
 test("agent branch checks permit normal appends but reject navigation away from the dispatching ancestor", () => {
   const manager = SessionManager.inMemory();
   const root = manager.appendCustomEntry("local-root", {});

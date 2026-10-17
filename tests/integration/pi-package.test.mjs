@@ -2,8 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir, readdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { watch } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { host } from "../helpers/pi-host.mjs";
 import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
@@ -54,11 +52,11 @@ test("ready package dynamically loads skills and tools, while confirmations fail
   assert.deepEqual(errors, []);
   const names = session.getAllTools().map(tool => tool.name);
   assert.deepEqual(names.filter(name => name.startsWith("ffa_")).sort(), [
-    "ffa_agent", "ffa_provider_call", "ffa_provider_manage", "ffa_provider_record", "ffa_providers", "ffa_python", "ffa_status",
+    "ffa_agent", "ffa_provider_call", "ffa_provider_manage", "ffa_provider_record", "ffa_providers", "ffa_status",
   ]);
   assert.deepEqual(loader.getSkills().skills.map(skill => skill.name).sort(), ["project-maintenance", "provider-calls", "provider-connections", "trading"]);
   const storeFiles = await readdir(join(root, ".ffa"));
-  assert.deepEqual(storeFiles.sort(), ["calls", "owner.lock", "permissions.json", "providers", "results", "settings.json", "workspace.json"]);
+  assert.deepEqual(storeFiles.sort(), ["calls", "permissions.json", "providers", "results", "settings.json", "workspace.json"]);
   const configure = session.agent.state.tools.find(tool => tool.name === "ffa_provider_manage");
   assert.ok(configure);
   await assert.rejects(configure.execute("test", { action: "register", provider: "local", config: { kind: "cli", command: "printf" },
@@ -202,23 +200,20 @@ test("ordinary changes still require the real Pi confirmation channel through co
   assert.equal(data.status, "rejected");
 });
 
-test("codemode cannot bypass confirmation and retains structured failure data", async t => {
-  const { session, root } = await host(t, "ready", [localProvider]);
+test("codemode cannot bypass confirmation for calls or provider registration", async t => {
+  const { session } = await host(t, "ready", [localProvider]);
   const result = await runScript(session, "gates", `
     const calls = await Promise.allSettled([
       tools.ffa_provider_call({ provider: "local", operation: "write", parameters: {} }),
       tools.ffa_provider_manage(${JSON.stringify({ action: "register", provider: "other", config: { kind: "cli", command: localProvider.command }, coverage: localProvider.coverage, operations: localProvider.operations })})
     ]);
-    const failed = await tools.ffa_python({ code: "raise ValueError('local test')" });
     const catalog = await tools.ffa_providers({});
-    return { calls: calls.map(call => call.status), failed, providers: catalog.providers.map(provider => provider.id) };
+    return { calls: calls.map(call => call.status), providers: catalog.providers.map(provider => provider.id) };
   `);
   const data = scriptValue(result);
   assert.deepEqual(data.calls, ["rejected", "rejected"]);
   assert.deepEqual(data.providers, ["local"]);
-  assert.equal(data.failed.state, "failed"); assert.equal(typeof data.failed.output, "object");
-  assert.ok((await readdir(join(root, data.failed.path))).includes("manifest.json"));
-  assert.equal(result.details.calls.filter(call => call.status === "error").length, 3);
+  assert.equal(result.details.calls.filter(call => call.status === "error").length, 2);
 });
 
 test("file tools cannot edit program-owned permissions and manual user maintenance remains effective", async t => {
@@ -267,8 +262,9 @@ test("ffa successful and failed outputs match their declared schemas", async t =
   assert.deepEqual(single.structuredContent.providers[0].operations[0].inputSchema, { type: "object" });
   const receipt = await execute("ffa_provider_call", { provider: "local", operation: "echo", parameters: { value: 1 } });
   await execute("ffa_provider_record", { kind: "receipt", id: receipt.structuredContent.receiptId });
-  await execute("ffa_python", { code: "print('42')" });
-  const failed = await execute("ffa_python", { code: "raise ValueError('local test')" });
+  const connection = await execute("ffa_provider_manage", { action: "read", provider: "local", target: "connection" });
+  const failed = await execute("ffa_provider_manage", { action: "update", provider: "local", target: "connection",
+    config: connection.structuredContent.config, expectedRevision: "expired" });
   assert.equal(failed.isError, true);
   for (const tool of session.agent.state.tools.filter(tool => tool.name.startsWith("ffa_"))) assert.ok(tool.outputSchema);
 });
@@ -318,30 +314,4 @@ test("codemode removes disabled workspace tools from discovery", async t => {
   await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
   const result = await codemode.execute("disabled", { code: `return ALL_TOOLS.filter(tool => tool.name.startsWith("ffa_")).map(tool => tool.name);` }, undefined);
   assert.deepEqual(scriptValue(result), []);
-});
-
-test("cancelling real codemode stops a running Python tool and saves its cancelled state", { timeout: 15_000 }, async t => {
-  const { session, root } = await host(t, "ready");
-  const controller = new AbortController();
-  const watcher = watch(root, { recursive: true }, (_event, path) => {
-    if (path?.endsWith("/ready")) controller.abort();
-  });
-  t.after(() => watcher.close());
-  const code = "from pathlib import Path\nimport time\nPath('ready').write_text('ready')\ntime.sleep(60)";
-  const result = await runScript(session, "cancel", `await tools.ffa_python({ code: ${JSON.stringify(code)} });`, controller.signal);
-  assert.equal(controller.signal.aborted, true);
-  assert.equal(result.isError, true);
-  assert.equal(result.details.calls[0].status, "cancelled");
-  const runs = join(root, "scratch/runs");
-  const directories = await readdir(runs);
-  assert.equal(directories.length, 1);
-  const manifestPath = join(runs, directories[0], "manifest.json");
-  // The sandbox can stop before the process tool finishes its final file writes.
-  let manifest;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    if (manifest.state !== "running") break;
-    await delay(10);
-  }
-  assert.equal(manifest.state, "cancelled");
 });

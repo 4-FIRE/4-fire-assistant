@@ -7,7 +7,7 @@ export function processEnvironment(env: Record<string, string>) {
 }
 
 export async function runCommand(command: string, args: string[], input: string | undefined, cwd: string,
-  env: Record<string, string>, signal?: AbortSignal): Promise<Observation> {
+  env: Record<string, string>, signal?: AbortSignal, options: { timeoutMs?: number } = {}): Promise<Observation> {
   signal?.throwIfAborted();
   return new Promise(resolve => {
     const child = spawn(command, args, { cwd, env: processEnvironment(env), shell: false,
@@ -16,7 +16,7 @@ export async function runCommand(command: string, args: string[], input: string 
     const out: Buffer[] = [], err: Buffer[] = [];
     const kill = () => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already stopped. */ } } };
     const stop = () => { failed = true; kill(); };
-    const timer = setTimeout(stop, 30_000);
+    const timer = setTimeout(stop, options.timeoutMs ?? 30_000);
     signal?.addEventListener("abort", stop, { once: true });
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
       bytes += chunk.length; if (bytes > 2 * 1024 * 1024) stop(); else target.push(chunk);

@@ -16,7 +16,7 @@ import { bindAgentRun } from "../../dist/extension/agent-run.js";
 import { agentFileTools } from "../../dist/integrations/pi/agent-tools.js";
 import { AgentService } from "../../dist/services/agents/agent-service.js";
 import { agentContext } from "../../dist/integrations/pi/agent-context.js";
-import { ResearchService } from "../../dist/services/research/research-service.js";
+import { PythonEnvironmentService } from "../../dist/services/workspace/python-environment-service.js";
 import { RecordService } from "../../dist/services/execution/record-service.js";
 import { WorkspaceInstance } from "../../dist/extension/lifecycle.js";
 import { mainTools } from "../../dist/tools/register.js";
@@ -48,10 +48,10 @@ async function fixture(t, withProvider = true) {
   const confirmations = new Confirmations(), ctx = session.extensionRunner.createToolContext("local", undefined);
   const confirm = value => confirmations.ask(ctx, "Local boundary check", value);
   const initialization = new InitializationService(root, current, providers);
-  const research = new ResearchService(root, store.settings), records = new RecordService(store.calls), agents = new AgentService(execution);
-  const instance = new WorkspaceInstance(root, store, providers, execution, initialization, research, records, agents);
+  const pythonEnvironment = new PythonEnvironmentService(root), records = new RecordService(store.calls), agents = new AgentService(execution);
+  const instance = new WorkspaceInstance(root, store, providers, execution, initialization, pythonEnvironment, records, agents);
   const agentHost = new PiAgents();
-  const bindRun = context => bindAgentRun(api, agentHost, providers, records, research, instance, context, confirmations);
+  const bindRun = context => bindAgentRun(api, agentHost, providers, records, instance, context, confirmations);
   t.after(() => instance.close());
   return { root, session, current, store, providers, execution, confirm, ctx, confirmations, agents, instance, bindRun };
 }
@@ -179,7 +179,7 @@ test("workspace initializes without providers or market and native Pi enables it
   await f.session.extensionRunner.emit({ type: "session_start" });
   const tools = f.session.agent.state.tools;
   assert.ok(tools.some(tool => tool.name === "ffa_agent"));
-  assert.ok(tools.some(tool => tool.name === "ffa_python"));
+  assert.ok(!tools.some(tool => tool.name === "ffa_python"));
   const status = tools.find(tool => tool.name === "ffa_status");
   const result = await status.execute("status", {});
   const { schema } = await import("../../dist/common/validation.js");
@@ -326,15 +326,15 @@ test("native agent file tools remain available while protecting internal aliases
   await assert.rejects(access(join(f.root, "../not-authorized")));
 });
 
-test("closing research cancels its pending configuration confirmation without saving settings", async t => {
-  const f = await fixture(t), research = f.instance.research, confirmation = localConfirmation();
-  const pending = research.configure("/usr/bin/python3", (value, signal) => confirmation.ask(value, undefined, signal));
+test("workspace close cancels setup without changing workspace settings", async t => {
+  const f = await fixture(t), service = f.instance.pythonEnvironment;
+  const settings = await readFile(join(f.root, ".ffa/settings.json"), "utf8");
+  const pending = service.setup();
   const rejected = assert.rejects(pending);
-  await confirmation.ready;
-  await research.close();
+  await f.instance.close();
   await rejected;
-  assert.deepEqual(f.store.settings.read(), {});
-  await assert.rejects(research.run({ code: "print(42)", inputs: null }));
+  assert.equal(await readFile(join(f.root, ".ffa/settings.json"), "utf8"), settings);
+  await assert.rejects(service.setup());
 });
 
 test("resuming a deferred approval checks changed permission before presenting it and never sends", async t => {

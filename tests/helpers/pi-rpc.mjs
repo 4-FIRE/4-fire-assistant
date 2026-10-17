@@ -18,7 +18,7 @@ class PiProcess {
     this.child = fork(new URL("./pi-rpc-driver.mjs", import.meta.url), [root, agentDir, packagePath], {
       cwd: root, execArgv: [], silent: true,
       // Do not inherit API keys, user settings, extensions, or credential helpers.
-      env: { HOME: home, PATH: "/usr/bin:/bin", LANG: "C.UTF-8", PI_CODING_AGENT_DIR: agentDir },
+      env: { HOME: home, XDG_DATA_HOME: join(home, "data"), PATH: "/usr/bin:/bin", LANG: "C.UTF-8", PI_CODING_AGENT_DIR: agentDir },
     });
     this.child.stderr.setEncoding("utf8").on("data", text => { this.stderr = (this.stderr + text).slice(-16_000); });
     let buffer = "";
@@ -128,6 +128,8 @@ export async function rpcWorkspace(t) {
     } finally { await rm(temp, { recursive: true, force: true }); }
   });
   await Promise.all([root, agentDir, home].map(path => mkdir(path)));
+  // A real invalid target exercises startup warnings without downloading dependencies.
+  await mkdir(join(home, "data/ffa/python/.venv"), { recursive: true });
   return {
     root, temp,
     async start(packagePath = packageRoot) {

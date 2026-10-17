@@ -5,7 +5,7 @@ import { privateDirectory } from "./file-access.js";
 import { parseSettings } from "./settings-file.js";
 
 export function initializeFileStorage(directory: string) {
-  requireThat(readdirSync(directory).every(name => name === "owner.lock"),
+  requireThat(readdirSync(directory).length === 0,
     "已有存储不能初始化或补全；请检查状态，保留原数据。");
   privateDirectory(directory, "calls"); privateDirectory(directory, "results"); privateDirectory(directory, "providers");
   writeJsonFile(directory, "settings.json", {}, parseSettings);
